@@ -66,6 +66,27 @@ describe('AI study response validation', () => {
     expect(fetchStub.mock.calls[0][0]).not.toContain('personal-test-key')
   })
 
+  it('uses an optional personal Groq key directly for word studies', async () => {
+    const fetchStub = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ choices: [{ message: { content: JSON.stringify(validStudy) } }] }),
+    })
+    vi.stubGlobal('fetch', fetchStub)
+
+    const study = await generateStudy('groq', 'faith', {
+      testament: 'Greek',
+      useSearchGrounding: false,
+      strictVerification: false,
+      groqApiKey: 'personal-groq-test-key',
+    })
+
+    expect(study.word).toBe('Faith')
+    expect(fetchStub).toHaveBeenCalledOnce()
+    expect(fetchStub.mock.calls[0][0]).toBe('https://api.groq.com/openai/v1/chat/completions')
+    expect(fetchStub.mock.calls[0][1].headers.Authorization).toBe('Bearer personal-groq-test-key')
+    expect(fetchStub.mock.calls[0][1].body).toContain('"model":"llama-3.3-70b-versatile"')
+  })
+
   it('requires trusted citations when strict verification is enabled', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
       ok: true,
@@ -150,12 +171,27 @@ describe('AI study response validation', () => {
     })
     vi.stubGlobal('fetch', fetchStub)
 
-    await expect(askPhilologist('gemini', [{ role: 'user', content: 'Explain the word.' }], undefined, 'personal-test-key'))
+    await expect(askPhilologist('gemini', [{ role: 'user', content: 'Explain the word.' }], undefined, { gemini: 'personal-test-key' }))
       .resolves.toBe('Direct Gemini answer.')
 
     expect(fetchStub).toHaveBeenCalledOnce()
     expect(fetchStub.mock.calls[0][0]).toContain('gemini-3.8-flash:generateContent')
     expect(fetchStub.mock.calls[0][1].headers['x-goog-api-key']).toBe('personal-test-key')
     expect(fetchStub.mock.calls[0][1].body).toContain('Explain the word.')
+  })
+
+  it('sends Groq chat directly with the optional personal key', async () => {
+    const fetchStub = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ choices: [{ message: { content: 'Direct Groq answer.' } }] }),
+    })
+    vi.stubGlobal('fetch', fetchStub)
+
+    await expect(askPhilologist('groq', [{ role: 'user', content: 'Explain the word.' }], undefined, { groq: 'personal-groq-test-key' }))
+      .resolves.toBe('Direct Groq answer.')
+
+    expect(fetchStub).toHaveBeenCalledOnce()
+    expect(fetchStub.mock.calls[0][0]).toBe('https://api.groq.com/openai/v1/chat/completions')
+    expect(fetchStub.mock.calls[0][1].headers.Authorization).toBe('Bearer personal-groq-test-key')
   })
 })

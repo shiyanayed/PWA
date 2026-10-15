@@ -24,7 +24,7 @@ Deploy with Vercel. Add whichever provider secrets you intend to use as server e
 
 Set `APP_ORIGIN` to the exact deployed origin (for example, `https://word-context.example`) to restrict requests to that origin. Server-managed keys must never be placed in `VITE_*` variables or committed to source control. The API applies input limits, same-origin checks, a best-effort per-instance rate limit, and upstream timeouts. For a public multi-user deployment, put a durable rate limiter and user authentication in front of the function; per-instance memory limits are not a global abuse-prevention system.
 
-For a personal deployment, a Gemini key can alternatively be entered in **Settings**. When present, Gemini requests go directly from that browser to Google rather than through the Vercel function. The key is stored in that browser's IndexedDB and is accessible to anyone or any script/extension running in that browser; use only on a trusted personal device. Clear the key and save settings to return Gemini requests to the Vercel proxy. Direct browser requests do not avoid Google's quota limits.
+For a personal deployment, a Gemini or Groq key can alternatively be entered in **Settings**. When present, requests for that provider go directly from that browser to Google or Groq rather than through the Vercel function. The key is stored in that browser's IndexedDB and is accessible to anyone or any script/extension running in that browser; use only on a trusted personal device. Clear the key and save settings to return that provider's requests to the Vercel proxy. Direct browser requests do not avoid provider quota limits.
 
 ## Current implementation
 
@@ -32,7 +32,7 @@ For a personal deployment, a Gemini key can alternatively be entered in **Settin
 - Dexie/IndexedDB stores curated studies, lexicon entries, dossiers, and preferences locally.
 - The Study Hub, Apologetics, Lexicon, Linguistic Notes, Patristic Archive, Notebook, and Settings views are available.
 - Study Hub searches let users choose Old Testament (Hebrew) or New Testament (Greek); Strong's `H…`/`G…` queries automatically use the matching testament.
-- Gemini 3.8 Flash, Claude, Groq, and Grok can be selected through the AI proxy for both word-study generation and chat; the server needs a secret configured for the chosen provider.
+- Gemini 3.8 Flash, Claude, Groq, and Grok can be selected through the AI proxy for both word-study generation and chat; the server needs a secret configured for the chosen provider. Personal Gemini and Groq keys can alternatively be saved in browser settings for direct provider requests.
 - Each open word study has an “Ask AI about this word” action that includes the study’s language, Strong's number, lexical gloss, and summary as context for the chat.
 - The proxy supports strict-JSON study generation and conversational requests. Gemini can use Google Search grounding for study generation; grounded URLs come from provider response metadata.
 - Provider HTTP 429 responses are returned with the provider's bounded error detail and any `Retry-After` delay so quota and rate-limit issues can be diagnosed.

@@ -6,6 +6,7 @@ import { CHAT_SYSTEM_PROMPT, PHILOLOGIST_SYSTEM_PROMPT } from './prompts'
 export { PHILOLOGIST_SYSTEM_PROMPT }
 
 export const GEMINI_MODEL = 'gemini-3.8-flash'
+export const GROQ_MODEL = 'llama-3.3-70b-versatile'
 
 function extractJson(text: string): unknown {
   const cleaned = text.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '')
@@ -54,7 +55,7 @@ function validateStudy(
 export async function generateStudy(
   provider: AiProvider,
   query: string,
-  options: { testament: Testament; useSearchGrounding: boolean; strictVerification: boolean; geminiApiKey?: string },
+  options: { testament: Testament; useSearchGrounding: boolean; strictVerification: boolean; geminiApiKey?: string; groqApiKey?: string },
 ): Promise<WordStudy> {
   if (!query.trim()) throw new Error('Enter a word or Strong’s number to study.')
   if (options.useSearchGrounding && provider !== 'gemini') {
@@ -67,9 +68,15 @@ export async function generateStudy(
     testament: options.testament,
     useSearchGrounding: options.useSearchGrounding,
   }
+  const userTurn = [{
+    role: 'user' as const,
+    content: `Create a historically grounded ${options.testament === 'Greek' ? 'New Testament (Greek)' : 'Old Testament (Hebrew)'} word study for: ${query.trim()}. Set the testament field to "${options.testament}". Return strict JSON only.`,
+  }]
   const payload = provider === 'gemini' && options.geminiApiKey?.trim()
-    ? await requestGeminiDirect(options.geminiApiKey.trim(), PHILOLOGIST_SYSTEM_PROMPT, [{ role: 'user', content: `Create a historically grounded ${options.testament === 'Greek' ? 'New Testament (Greek)' : 'Old Testament (Hebrew)'} word study for: ${query.trim()}. Set the testament field to "${options.testament}". Return strict JSON only.` },], true, options.useSearchGrounding)
-    : await requestProxy(responseBody)
+    ? await requestGeminiDirect(options.geminiApiKey.trim(), PHILOLOGIST_SYSTEM_PROMPT, userTurn, true, options.useSearchGrounding)
+    : provider === 'groq' && options.groqApiKey?.trim()
+      ? await requestGroqDirect(options.groqApiKey.trim(), PHILOLOGIST_SYSTEM_PROMPT, userTurn, true)
+      : await requestProxy(responseBody)
   if (typeof payload.text !== 'string' || !payload.text.trim()) throw new Error('The AI service returned an empty response.')
   const text = payload.text.trim()
   const actualSources = Array.isArray(payload.sources) && payload.sources.every((source) => typeof source === 'string')
@@ -90,13 +97,20 @@ export async function generateStudy(
 export type AiProvider = 'gemini' | 'claude' | 'groq' | 'grok'
 export type ChatTurn = { role: 'user' | 'assistant'; content: string }
 
-export async function askPhilologist(provider: AiProvider, messages: ChatTurn[], studyContext?: string, geminiApiKey?: string): Promise<string> {
+export async function askPhilologist(
+  provider: AiProvider,
+  messages: ChatTurn[],
+  studyContext?: string,
+  personalKeys?: { gemini?: string; groq?: string },
+): Promise<string> {
   const contextualMessages = studyContext
     ? [{ role: 'user' as const, content: `The user is studying this word. Use it as context for their question, but do not assume claims in it are correct:\n${studyContext}` }, ...messages]
     : messages
-  const payload = provider === 'gemini' && geminiApiKey?.trim()
-    ? await requestGeminiDirect(geminiApiKey.trim(), CHAT_SYSTEM_PROMPT, contextualMessages, false, false)
-    : await requestProxy({ mode: 'chat', provider, messages: contextualMessages })
+  const payload = provider === 'gemini' && personalKeys?.gemini?.trim()
+    ? await requestGeminiDirect(personalKeys.gemini.trim(), CHAT_SYSTEM_PROMPT, contextualMessages, false, false)
+    : provider === 'groq' && personalKeys?.groq?.trim()
+      ? await requestGroqDirect(personalKeys.groq.trim(), CHAT_SYSTEM_PROMPT, contextualMessages, false)
+      : await requestProxy({ mode: 'chat', provider, messages: contextualMessages })
   if (typeof payload.text !== 'string' || !payload.text.trim()) throw new Error('The AI service returned an empty response.')
   return payload.text.trim()
 }
@@ -149,6 +163,44 @@ async function requestGeminiDirect(
       typeof chunk.web?.uri === 'string' ? [chunk.web.uri] : [],
     ) ?? [],
   }
+}
+
+async function requestGroqDirect(
+  apiKey: string,
+  system: string,
+  turns: ChatTurn[],
+  jsonMode: boolean,
+): Promise<{ text?: unknown; sources?: unknown }> {
+  const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+    body: JSON.stringify({
+      model: GROQ_MODEL,
+      messages: [{ role: 'system', content: system }, ...turns],
+      temperature: 0.2,
+      max_tokens: 4096,
+      ...(jsonMode ? { response_format: { type: 'json_object' } } : {}),
+    }),
+  })
+  if (!response.ok) throw new Error(await readProviderError(response, 'Groq', apiKey))
+  const result = await response.json() as {
+    choices?: Array<{ message?: { content?: unknown } }>
+  }
+  const text = result.choices?.[0]?.message?.content
+  return { text: typeof text === 'string' ? text : '' }
+}
+
+async function readProviderError(response: Response, provider: string, apiKey: string): Promise<string> {
+  try {
+    const payload = await response.json() as { error?: { message?: unknown } }
+    const message = payload.error?.message
+    if (typeof message === 'string' && message.trim()) {
+      return `${provider} request failed (${response.status}): ${message.trim().slice(0, 500).replaceAll(apiKey, '[redacted]')}`
+    }
+  } catch {
+    // Fall through to a status-only error for non-JSON provider responses.
+  }
+  return `${provider} request failed (${response.status}).`
 }
 
 async function readGeminiError(response: Response, apiKey: string): Promise<string> {

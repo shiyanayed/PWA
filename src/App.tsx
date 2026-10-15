@@ -49,6 +49,7 @@ function App() {
   const [linguisticFilter, setLinguisticFilter] = useState<'All' | 'Greek' | 'Hebrew'>('All')
   const [provider, setProvider] = useState<AiProvider>('gemini')
   const [geminiApiKey, setGeminiApiKey] = useState('')
+  const [groqApiKey, setGroqApiKey] = useState('')
   const [theme, setTheme] = useState<ThemeMode>('midnight')
   const [useSearchGrounding, setUseSearchGrounding] = useState(true)
   const [strictVerification, setStrictVerification] = useState(false)
@@ -81,12 +82,13 @@ function App() {
     const start = async () => {
       try {
         await initializeKnowledgeBase()
-        const [savedProvider, savedTheme, savedGrounding, savedStrict, savedGeminiApiKey, seenOnboarding] = await Promise.all([
+        const [savedProvider, savedTheme, savedGrounding, savedStrict, savedGeminiApiKey, savedGroqApiKey, seenOnboarding] = await Promise.all([
           db.settings.get('aiProvider'),
           db.settings.get('theme'),
           db.settings.get('useSearchGrounding'),
           db.settings.get('strictVerification'),
           db.settings.get('geminiApiKey'),
+          db.settings.get('groqApiKey'),
           db.settings.get('onboardingSeen'),
         ])
         if (cancelled) return
@@ -94,6 +96,7 @@ function App() {
         const selectedTheme = savedTheme?.value === 'scholar' ? 'scholar' : 'midnight'
         setProvider(value)
         setGeminiApiKey(savedGeminiApiKey?.value ?? '')
+        setGroqApiKey(savedGroqApiKey?.value ?? '')
         setTheme(selectedTheme)
         setUseSearchGrounding(savedGrounding?.value !== 'false' && value === 'gemini')
         setStrictVerification(savedStrict?.value === 'true')
@@ -151,7 +154,7 @@ function App() {
     try {
       let result: WordStudy
       try {
-        result = await generateStudy(provider, term, { testament: selectedTestament, useSearchGrounding, strictVerification, geminiApiKey })
+        result = await generateStudy(provider, term, { testament: selectedTestament, useSearchGrounding, strictVerification, geminiApiKey, groqApiKey })
       } catch (cause) {
         if (!local.entry) throw cause
         result = createLexiconFallbackStudy(local.entry)
@@ -247,11 +250,19 @@ function App() {
         geminiApiKey.trim()
           ? db.settings.put({ key: 'geminiApiKey', value: geminiApiKey.trim() })
           : db.settings.delete('geminiApiKey'),
+        groqApiKey.trim()
+          ? db.settings.put({ key: 'groqApiKey', value: groqApiKey.trim() })
+          : db.settings.delete('groqApiKey'),
       ])
       setGeminiApiKey(geminiApiKey.trim())
-      setNotice(geminiApiKey.trim()
-        ? 'Preferences and Gemini key saved in this browser. Gemini requests will go directly from this browser to Google.'
-        : 'Preferences saved on this device. Gemini will use the server proxy unless a key is configured on Vercel.')
+      setGroqApiKey(groqApiKey.trim())
+      const personalProviders = [
+        geminiApiKey.trim() ? 'Gemini' : '',
+        groqApiKey.trim() ? 'Groq' : '',
+      ].filter(Boolean)
+      setNotice(personalProviders.length
+        ? `Preferences and ${personalProviders.join(' and ')} key${personalProviders.length === 1 ? '' : 's'} saved in this browser. Requests for those providers go directly from this browser to the provider.`
+        : 'Preferences saved on this device. AI requests use the Vercel proxy.')
     } catch (cause) {
       setError(`Could not save settings: ${errorMessage(cause)}`)
     }
@@ -411,7 +422,7 @@ function App() {
             <section className="page-content settings-page">
               <div className="settings-intro"><div className="eyebrow">YOUR WORKSPACE, YOUR DEVICE</div><h2>Settings</h2><p>Word Context keeps your library and preferences in this browser.</p></div>
               <form onSubmit={(event) => void saveSettings(event)} className="settings-card">
-                <div className="settings-card-heading"><div className="settings-icon"><Sparkles size={18} /></div><div><h3>AI word studies & chat</h3><p>Choose a provider configured on the server, or use your own Gemini key in this browser.</p></div></div>
+                <div className="settings-card-heading"><div className="settings-icon"><Sparkles size={18} /></div><div><h3>AI word studies & chat</h3><p>Choose a provider configured on the server, or use a personal Gemini or Groq key in this browser.</p></div></div>
                 <label className="field-label" htmlFor="ai-provider">AI provider</label>
                 <select id="ai-provider" className="text-input provider-select" value={provider} onChange={(event) => {
                   const nextProvider = event.target.value as AiProvider
@@ -425,7 +436,12 @@ function App() {
                   <input id="gemini-api-key" className="text-input" type="password" autoComplete="off" spellCheck={false} value={geminiApiKey} onChange={(event) => setGeminiApiKey(event.target.value)} placeholder="Paste your Gemini API key" />
                   <p className="field-help">When saved, Gemini requests go directly from this browser to Google and bypass the Vercel proxy. The key is stored in this browser’s IndexedDB and is accessible to anyone using this browser, including browser scripts and extensions. Don’t use this on a shared or untrusted device. Clear the field and save to remove it and return to the Vercel proxy.</p>
                 </div>}
-                <p className="field-help">Without a personal Gemini key, provider credentials must be configured as server environment variables in Vercel.</p>
+                {provider === 'groq' && <div className="personal-key-field">
+                  <label className="field-label" htmlFor="groq-api-key">Your Groq API key (optional)</label>
+                  <input id="groq-api-key" className="text-input" type="password" autoComplete="off" spellCheck={false} value={groqApiKey} onChange={(event) => setGroqApiKey(event.target.value)} placeholder="Paste your Groq API key" />
+                  <p className="field-help">When saved, Groq requests go directly from this browser to Groq and bypass the Vercel proxy. The key is stored in this browser’s IndexedDB and is accessible to anyone using this browser, including browser scripts and extensions. Don’t use this on a shared or untrusted device. Clear the field and save to remove it and return to the Vercel proxy.</p>
+                </div>}
+                <p className="field-help">Without a personal key for the selected provider, its credentials must be configured as server environment variables in Vercel.</p>
                 <div className="verification-options">
                   <label><input type="checkbox" checked={useSearchGrounding} disabled={provider !== 'gemini'} onChange={(event) => setUseSearchGrounding(event.target.checked)} /><span><strong>Google Search grounding</strong><small>Attach search grounding for Gemini studies. Other providers do not expose this integration.</small></span></label>
                   <label><input type="checkbox" checked={strictVerification} onChange={(event) => setStrictVerification(event.target.checked)} /><span><strong>Strict source filter</strong><small>Keep citations from registered Tier 1–3 domains; generation fails if verified-domain sources do not average 90/100.</small></span></label>
@@ -442,7 +458,7 @@ function App() {
           <footer className="page-footer"><span>WORD CONTEXT <span className="footer-dot">·</span> HISTORICAL BIBLICAL EXEGESIS</span><span>Study with curiosity. Cite with care.</span></footer>
         </div>
       </main>
-      {chatOpen && <ChatDialog provider={provider} geminiApiKey={geminiApiKey} studyContext={selectedStudy ? formatStudyContext(selectedStudy) : undefined} onClose={() => setChatOpen(false)} />}
+      {chatOpen && <ChatDialog provider={provider} personalKeys={{ gemini: geminiApiKey, groq: groqApiKey }} studyContext={selectedStudy ? formatStudyContext(selectedStudy) : undefined} onClose={() => setChatOpen(false)} />}
       {showOnboarding && <OnboardingDialog onContinue={() => void finishOnboarding()} onMethodology={() => { void finishOnboarding(); setShowMethodology(true) }} />}
       {showMethodology && <MethodologyDialog onClose={() => setShowMethodology(false)} />}
     </div>
@@ -453,7 +469,7 @@ function isAiProvider(value: string | undefined): value is AiProvider {
   return value === 'gemini' || value === 'claude' || value === 'groq' || value === 'grok'
 }
 
-function ChatDialog({ provider, geminiApiKey, studyContext, onClose }: { provider: AiProvider; geminiApiKey: string; studyContext?: string; onClose: () => void }) {
+function ChatDialog({ provider, personalKeys, studyContext, onClose }: { provider: AiProvider; personalKeys: { gemini: string; groq: string }; studyContext?: string; onClose: () => void }) {
   const [messages, setMessages] = useState<ChatTurn[]>([])
   const [question, setQuestion] = useState('')
   const [isSending, setIsSending] = useState(false)
@@ -470,7 +486,7 @@ function ChatDialog({ provider, geminiApiKey, studyContext, onClose }: { provide
     setError('')
     setIsSending(true)
     try {
-      const answer = await askPhilologist(provider, nextMessages, studyContext, geminiApiKey)
+      const answer = await askPhilologist(provider, nextMessages, studyContext, personalKeys)
       setMessages([...nextMessages, { role: 'assistant', content: answer }])
     } catch (cause) {
       setError(errorMessage(cause))
