@@ -1,4 +1,4 @@
-import { CHAT_SYSTEM_PROMPT, PHILOLOGIST_SYSTEM_PROMPT } from '../src/prompts'
+import { CHAT_SYSTEM_PROMPT, PHILOLOGIST_SYSTEM_PROMPT } from '../src/prompts.js'
 
 type Provider = 'gemini' | 'claude' | 'groq' | 'grok'
 type Turn = { role: 'user' | 'assistant'; content: string }
