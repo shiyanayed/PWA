@@ -30,7 +30,7 @@ Set `APP_ORIGIN` to the exact deployed origin (for example, `https://word-contex
 - Dexie/IndexedDB stores curated studies, lexicon entries, dossiers, and preferences locally.
 - The Study Hub, Apologetics, Lexicon, Linguistic Notes, Patristic Archive, Notebook, and Settings views are available.
 - Study Hub searches let users choose Old Testament (Hebrew) or New Testament (Greek); Strong's `H…`/`G…` queries automatically use the matching testament.
-- Gemini, Claude, Groq, and Grok can be selected through the AI proxy for both word-study generation and chat; the server needs a secret configured for the chosen provider.
+- Gemini 3.8 Flash, Claude, Groq, and Grok can be selected through the AI proxy for both word-study generation and chat; the server needs a secret configured for the chosen provider.
 - Each open word study has an “Ask AI about this word” action that includes the study’s language, Strong's number, lexical gloss, and summary as context for the chat.
 - The proxy supports strict-JSON study generation and conversational requests. Gemini can use Google Search grounding for study generation; grounded URLs come from provider response metadata.
 - Local study lookup happens before AI generation. If the server is unavailable but a matching Strong's entry exists, the app can save an explicitly labeled lexicon-only fallback without presenting invented historical context.

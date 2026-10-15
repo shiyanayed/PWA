@@ -80,7 +80,7 @@ describe('AI proxy', () => {
     expect(response.result.body).toEqual({ text: '{"word":"Faith"}', sources: [] })
     expect(JSON.stringify(response.result.body)).not.toContain('server-only-test-key')
     expect(upstreamFetch).toHaveBeenCalledOnce()
-    expect(String(upstreamFetch.mock.calls[0][0])).toContain('generativelanguage.googleapis.com')
+    expect(String(upstreamFetch.mock.calls[0][0])).toContain('/v1beta/models/gemini-3.8-flash:generateContent')
   })
 
   it('rejects missing or invalid testament selections before contacting a provider', async () => {
