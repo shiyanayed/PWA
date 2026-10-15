@@ -83,6 +83,32 @@ describe('AI proxy', () => {
     expect(String(upstreamFetch.mock.calls[0][0])).toContain('/v1beta/models/gemini-3.8-flash:generateContent')
   })
 
+  it('returns Gemini quota details and retry delay for upstream rate limits', async () => {
+    process.env.GEMINI_API_KEY = 'server-only-test-key'
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: false,
+      status: 429,
+      headers: { get: (name: string) => name === 'retry-after' ? '30' : null },
+      json: async () => ({
+        error: { message: 'Quota exceeded for metric requests_per_minute.' },
+      }),
+    }))
+
+    const response = responseRecorder()
+    await handler({
+      method: 'POST',
+      headers: { host: 'example.test', origin: 'https://example.test', 'x-forwarded-for': '192.0.2.94' },
+      body: { mode: 'study', provider: 'gemini', query: 'faith', testament: 'Greek' },
+    }, response)
+
+    expect(response.result.statusCode).toBe(429)
+    expect(response.result.headers['Retry-After']).toBe('30')
+    expect(response.result.body).toEqual({
+      error: expect.stringContaining('Quota exceeded for metric requests_per_minute.'),
+    })
+    expect(JSON.stringify(response.result.body)).not.toContain('server-only-test-key')
+  })
+
   it('rejects missing or invalid testament selections before contacting a provider', async () => {
     process.env.GEMINI_API_KEY = 'server-only-test-key'
     const upstreamFetch = vi.fn()

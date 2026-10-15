@@ -15,6 +15,17 @@ type Response = {
   end(): void
 }
 
+class ProviderHttpError extends Error {
+  constructor(
+    readonly status: number,
+    message: string,
+    readonly retryAfter?: string,
+  ) {
+    super(message)
+    this.name = 'ProviderHttpError'
+  }
+}
+
 declare const process: { env: Record<string, string | undefined> }
 
 const limits = new Map<string, { count: number; resetsAt: number }>()
@@ -121,6 +132,14 @@ export default async function handler(request: Request, response: Response): Pro
     response.status(200).json(result)
   } catch (error) {
     console.error('AI provider request failed', { provider, message: error instanceof Error ? error.message : 'unknown error' })
+    if (error instanceof ProviderHttpError && error.status === 429) {
+      if (error.retryAfter && /^\d+$/.test(error.retryAfter)) response.setHeader('Retry-After', error.retryAfter)
+      const detail = error.message ? ` Provider detail: ${error.message}` : ''
+      response.status(429).json({
+        error: `${providerLabel(provider)} rate limit or quota reached. Check the provider project’s limits and billing.${detail}`,
+      })
+      return
+    }
     response.status(502).json({ error: `${providerLabel(provider)} could not complete the request. Check server configuration and try again.` })
   }
 }
@@ -168,7 +187,14 @@ async function requestProvider(
     body: JSON.stringify(payload),
     signal: AbortSignal.timeout(60_000),
   })
-  if (!upstream.ok) throw new Error(`Provider returned HTTP ${upstream.status}`)
+  if (!upstream.ok) {
+    const providerMessage = await extractProviderErrorMessage(upstream, key)
+    throw new ProviderHttpError(
+      upstream.status,
+      providerMessage ?? `Provider returned HTTP ${upstream.status}`,
+      upstream.headers.get('retry-after') ?? undefined,
+    )
+  }
   const result = await upstream.json() as Record<string, unknown>
   const text = provider === 'gemini'
     ? extractGeminiText(result)
@@ -178,6 +204,17 @@ async function requestProvider(
   if (!text) throw new Error('Provider response contained no text')
   const sources = provider === 'gemini' && useSearchGrounding ? extractGeminiSources(result) : []
   return { text, sources }
+}
+
+async function extractProviderErrorMessage(upstream: globalThis.Response, key: string): Promise<string | undefined> {
+  try {
+    const payload = await upstream.json() as { error?: { message?: unknown } }
+    const message = payload.error?.message
+    if (typeof message !== 'string' || !message.trim()) return undefined
+    return message.trim().slice(0, 500).replaceAll(key, '[redacted]')
+  } catch {
+    return undefined
+  }
 }
 
 function extractGeminiText(result: Record<string, unknown>): string {

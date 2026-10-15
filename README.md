@@ -33,6 +33,7 @@ Set `APP_ORIGIN` to the exact deployed origin (for example, `https://word-contex
 - Gemini 3.8 Flash, Claude, Groq, and Grok can be selected through the AI proxy for both word-study generation and chat; the server needs a secret configured for the chosen provider.
 - Each open word study has an “Ask AI about this word” action that includes the study’s language, Strong's number, lexical gloss, and summary as context for the chat.
 - The proxy supports strict-JSON study generation and conversational requests. Gemini can use Google Search grounding for study generation; grounded URLs come from provider response metadata.
+- Provider HTTP 429 responses are returned with the provider's bounded error detail and any `Retry-After` delay so quota and rate-limit issues can be diagnosed.
 - Local study lookup happens before AI generation. If the server is unavailable but a matching Strong's entry exists, the app can save an explicitly labeled lexicon-only fallback without presenting invented historical context.
 - Source host scoring, strict trusted-domain filtering, two themes, favorites, per-study notes, user tags, and tag filtering are implemented.
 - The language-notes catalogue covers five source-linked cases: euphemistic usage (H1288), a rare sense (H2617), translation range (G1242), and contextual polysemy (G2205, G5331). Notes appear both in the catalogue and with matching studies; they are not presented as a list of proven contronyms.
