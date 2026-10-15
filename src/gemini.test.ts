@@ -42,6 +42,30 @@ describe('AI study response validation', () => {
     expect(fetchStub.mock.calls[0][1].body).toContain('"testament":"Greek"')
   })
 
+  it('uses an optional personal Gemini key directly for word studies', async () => {
+    const fetchStub = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ candidates: [{ content: { parts: [{ text: JSON.stringify(validStudy) }] } }] }),
+    })
+    vi.stubGlobal('fetch', fetchStub)
+
+    const study = await generateStudy('gemini', 'faith', {
+      testament: 'Greek',
+      useSearchGrounding: false,
+      strictVerification: false,
+      geminiApiKey: 'personal-test-key',
+    })
+
+    expect(study.word).toBe('Faith')
+    expect(fetchStub).toHaveBeenCalledOnce()
+    expect(fetchStub.mock.calls[0][0]).toContain('/v1beta/models/gemini-3.8-flash:generateContent')
+    expect(fetchStub.mock.calls[0][1].headers).toEqual({
+      'Content-Type': 'application/json',
+      'x-goog-api-key': 'personal-test-key',
+    })
+    expect(fetchStub.mock.calls[0][0]).not.toContain('personal-test-key')
+  })
+
   it('requires trusted citations when strict verification is enabled', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
       ok: true,
@@ -117,5 +141,21 @@ describe('AI study response validation', () => {
       { role: 'user', content: expect.stringContaining(context) },
       { role: 'user', content: 'How is this used here?' },
     ])
+  })
+
+  it('sends Gemini chat directly with the optional personal key', async () => {
+    const fetchStub = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ candidates: [{ content: { parts: [{ text: 'Direct Gemini answer.' }] } }] }),
+    })
+    vi.stubGlobal('fetch', fetchStub)
+
+    await expect(askPhilologist('gemini', [{ role: 'user', content: 'Explain the word.' }], undefined, 'personal-test-key'))
+      .resolves.toBe('Direct Gemini answer.')
+
+    expect(fetchStub).toHaveBeenCalledOnce()
+    expect(fetchStub.mock.calls[0][0]).toContain('gemini-3.8-flash:generateContent')
+    expect(fetchStub.mock.calls[0][1].headers['x-goog-api-key']).toBe('personal-test-key')
+    expect(fetchStub.mock.calls[0][1].body).toContain('Explain the word.')
   })
 })

@@ -22,7 +22,9 @@ Deploy with Vercel. Add whichever provider secrets you intend to use as server e
 | Groq | `GROQ_API_KEY` |
 | xAI Grok | `XAI_API_KEY` |
 
-Set `APP_ORIGIN` to the exact deployed origin (for example, `https://word-context.example`) to restrict requests to that origin. Keys must never be placed in `VITE_*` variables or saved in browser storage. The API applies input limits, same-origin checks, a best-effort per-instance rate limit, and upstream timeouts. For a public multi-user deployment, put a durable rate limiter and user authentication in front of the function; per-instance memory limits are not a global abuse-prevention system.
+Set `APP_ORIGIN` to the exact deployed origin (for example, `https://word-context.example`) to restrict requests to that origin. Server-managed keys must never be placed in `VITE_*` variables or committed to source control. The API applies input limits, same-origin checks, a best-effort per-instance rate limit, and upstream timeouts. For a public multi-user deployment, put a durable rate limiter and user authentication in front of the function; per-instance memory limits are not a global abuse-prevention system.
+
+For a personal deployment, a Gemini key can alternatively be entered in **Settings**. When present, Gemini requests go directly from that browser to Google rather than through the Vercel function. The key is stored in that browser's IndexedDB and is accessible to anyone or any script/extension running in that browser; use only on a trusted personal device. Clear the key and save settings to return Gemini requests to the Vercel proxy. Direct browser requests do not avoid Google's quota limits.
 
 ## Current implementation
 
