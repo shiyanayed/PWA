@@ -27,12 +27,20 @@ export function safeParseGeminiJson<T = unknown>(rawText: string): T {
   }
 
   const cleaned = rawText.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim()
-  const candidate = extractJsonCandidate(cleaned)
-  const candidates = candidate && candidate !== cleaned ? [cleaned, candidate] : [cleaned]
+  const quoteRepaired = repairInternalQuotes(cleaned)
+  const candidates = new Set<string>([cleaned, quoteRepaired])
+  for (const text of [...candidates]) {
+    const candidate = extractJsonCandidate(text)
+    if (candidate) candidates.add(candidate)
+    const repairedCandidate = extractJsonCandidate(repairInternalQuotes(text))
+    if (repairedCandidate) candidates.add(repairedCandidate)
+  }
+
   let lastError: unknown
 
   for (const text of candidates) {
-    for (const input of [text, sanitizeControlCharactersInJson(text)]) {
+    const repaired = repairInternalQuotes(text)
+    for (const input of [text, repaired, sanitizeControlCharactersInJson(repaired)]) {
       try {
         return JSON.parse(input) as T
       } catch (error) {
@@ -97,6 +105,39 @@ function sanitizeControlCharactersInJson(jsonText: string): string {
     } else if (char === '"') {
       insideString = true
     }
+  }
+
+  return result
+}
+
+function repairInternalQuotes(jsonText: string): string {
+  let insideString = false
+  let isEscaped = false
+  let result = ''
+
+  for (let index = 0; index < jsonText.length; index += 1) {
+    const char = jsonText[index]
+
+    if (char === '"' && insideString && !isEscaped) {
+      let nextIndex = index + 1
+      while (/\s/.test(jsonText[nextIndex] ?? '') && nextIndex < jsonText.length) nextIndex += 1
+      const next = jsonText[nextIndex]
+      if (next && ![',', '}', ']', ':'].includes(next)) {
+        result += '\\"'
+        continue
+      }
+      insideString = false
+      result += char
+      continue
+    }
+
+    result += char
+    if (char === '"' && !insideString && !isEscaped) {
+      insideString = true
+    }
+
+    if (isEscaped) isEscaped = false
+    else if (char === '\\') isEscaped = true
   }
 
   return result

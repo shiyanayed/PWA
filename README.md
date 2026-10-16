@@ -122,7 +122,7 @@ Chat request shape:
 }
 ```
 
-Study generation expects valid JSON containing the fields validated in [`src/gemini.ts`](./src/gemini.ts). The client parser can extract JSON from a conversational preamble or Markdown code fence and repair raw control characters inside strings before parsing. A provider returning HTTP 200 does not guarantee a usable study: invalid JSON, missing fields, or a testament mismatch can still cause client-side validation to reject it.
+Study generation expects valid JSON containing the fields validated in [`src/gemini.ts`](./src/gemini.ts). The client parser can extract JSON from a conversational preamble or Markdown code fence, repair raw control characters and unescaped internal quotes in strings, and then validate the result. A provider returning HTTP 200 does not guarantee a usable study: invalid JSON, missing fields, or a testament mismatch can still cause client-side validation to reject it.
 
 The proxy currently applies these limits and checks:
 

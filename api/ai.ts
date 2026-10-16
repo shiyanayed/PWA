@@ -86,11 +86,6 @@ export default async function handler(request: Request, response: Response): Pro
     response.status(400).json({ error: 'Choose a supported AI provider.' })
     return
   }
-  const key = process.env[providerKeys[provider]]
-  if (!key) {
-    response.status(503).json({ error: `${providerLabel(provider)} is not configured on the server.` })
-    return
-  }
 
   let turns: Turn[]
   if (mode === 'study') {
@@ -103,7 +98,10 @@ export default async function handler(request: Request, response: Response): Pro
       return
     }
     const testamentLabel = body.testament === 'Greek' ? 'New Testament (Greek)' : 'Old Testament (Hebrew)'
-    turns = [{ role: 'user', content: `Create a historically grounded ${testamentLabel} word study for: ${body.query.trim()}. Set the testament field to "${body.testament}". Return strict JSON only.` }]
+    turns = [{
+      role: 'user',
+      content: `Create a historically grounded ${testamentLabel} word study for: ${body.query.trim()}. Set the testament field to "${body.testament}". Return strict JSON only.`,
+    }]
   } else if (mode === 'chat') {
     const parsed = parseTurns(body.messages)
     if (!parsed) {
@@ -122,6 +120,12 @@ export default async function handler(request: Request, response: Response): Pro
     return
   }
 
+  const key = process.env[providerKeys[provider]]
+  if (!key) {
+    response.status(503).json({ error: `${providerLabel(provider)} is not configured on the server.` })
+    return
+  }
+
   try {
     const result = await requestProvider(
       provider,
@@ -133,7 +137,10 @@ export default async function handler(request: Request, response: Response): Pro
     )
     response.status(200).json(result)
   } catch (error) {
-    console.error('AI provider request failed', { provider, message: error instanceof Error ? error.message : 'unknown error' })
+    console.error('AI provider request failed', {
+      provider,
+      message: error instanceof Error ? error.message : 'unknown error',
+    })
     if (error instanceof ProviderHttpError && error.status === 429) {
       if (error.retryAfter && /^\d+$/.test(error.retryAfter)) response.setHeader('Retry-After', error.retryAfter)
       const detail = error.message ? ` Provider detail: ${error.message}` : ''
@@ -169,13 +176,15 @@ async function requestProvider(
   jsonMode: boolean,
   useSearchGrounding: boolean,
 ): Promise<{ text: string; sources: string[] }> {
+  if (provider === 'gemini') {
+    return requestGeminiWithFallback(key, system, turns, jsonMode, useSearchGrounding)
+  }
+
   let endpoint: string
   let headers: Record<string, string>
   let payload: Record<string, unknown>
 
-  if (provider === 'gemini') {
-    return requestGeminiWithFallback(key, system, turns, jsonMode, useSearchGrounding)
-  } else if (provider === 'claude') {
+  if (provider === 'claude') {
     endpoint = 'https://api.anthropic.com/v1/messages'
     headers = { 'Content-Type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01' }
     payload = { model: 'claude-3-5-haiku-latest', max_tokens: 4096, system, messages: turns }
@@ -198,17 +207,14 @@ async function requestProvider(
     signal: AbortSignal.timeout(60_000),
   })
   if (!upstream.ok) {
-    const providerMessage = await extractProviderErrorMessage(upstream, key)
     throw new ProviderHttpError(
       upstream.status,
-      providerMessage ?? `Provider returned HTTP ${upstream.status}`,
+      await extractProviderErrorMessage(upstream, key) ?? `Provider returned HTTP ${upstream.status}`,
       upstream.headers.get('retry-after') ?? undefined,
     )
   }
   const result = await upstream.json() as Record<string, unknown>
-  const text = provider === 'claude'
-    ? extractClaudeText(result)
-    : extractOpenAiText(result)
+  const text = provider === 'claude' ? extractClaudeText(result) : extractOpenAiText(result)
   if (!text) throw new Error('Provider response contained no text')
   return { text, sources: [] }
 }
@@ -233,7 +239,10 @@ async function requestGeminiWithFallback(
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               system_instruction: { parts: [{ text: system }] },
-              contents: turns.map((turn) => ({ role: turn.role === 'assistant' ? 'model' : 'user', parts: [{ text: turn.content }] })),
+              contents: turns.map((turn) => ({
+                role: turn.role === 'assistant' ? 'model' : 'user',
+                parts: [{ text: turn.content }],
+              })),
               generationConfig: {
                 ...(jsonMode && !useSearchGrounding ? { responseMimeType: 'application/json' } : {}),
                 temperature: 0.2,
@@ -249,15 +258,12 @@ async function requestGeminiWithFallback(
         if (attempt === 0) await delay(1000)
         continue
       }
+
       if (upstream.ok) {
         const result = await upstream.json() as Record<string, unknown>
         const text = extractGeminiText(result)
         if (!text) throw new Error(`Gemini model ${model} returned no text.`)
-        return {
-          text,
-          sources: useSearchGrounding ? extractGeminiSources(result) : [],
-          model,
-        }
+        return { text, sources: useSearchGrounding ? extractGeminiSources(result) : [], model }
       }
 
       const providerMessage = await extractProviderErrorMessage(upstream, key)
@@ -265,10 +271,9 @@ async function requestGeminiWithFallback(
         upstream.status,
         providerMessage ?? `Provider returned HTTP ${upstream.status}`,
         upstream.headers.get('retry-after') ?? undefined,
-        upstream.status === 404 || upstream.status === 429 || upstream.status === 500 || upstream.status === 503,
+        [404, 429, 500, 503].includes(upstream.status),
       )
       lastError = failure
-
       if (upstream.status === 404) break
       if (![429, 500, 503].includes(upstream.status)) throw failure
       if (attempt === 0) await delay(1000)
@@ -304,7 +309,9 @@ function extractGeminiText(result: Record<string, unknown>): string {
 }
 
 function extractGeminiSources(result: Record<string, unknown>): string[] {
-  const candidates = result.candidates as Array<{ groundingMetadata?: { groundingChunks?: Array<{ web?: { uri?: string } }> } }> | undefined
+  const candidates = result.candidates as Array<{
+    groundingMetadata?: { groundingChunks?: Array<{ web?: { uri?: string } }> }
+  }> | undefined
   const chunks = candidates?.[0]?.groundingMetadata?.groundingChunks ?? []
   return [...new Set(chunks.flatMap((chunk) => typeof chunk.web?.uri === 'string' ? [chunk.web.uri] : []))]
 }
@@ -326,7 +333,10 @@ function parseTurns(value: unknown): Turn[] | undefined {
   for (const item of value) {
     if (!item || typeof item !== 'object') return undefined
     const turn = item as Record<string, unknown>
-    if ((turn.role !== 'user' && turn.role !== 'assistant') || typeof turn.content !== 'string' || !turn.content.trim() || turn.content.length > 5000) return undefined
+    if ((turn.role !== 'user' && turn.role !== 'assistant')
+      || typeof turn.content !== 'string'
+      || !turn.content.trim()
+      || turn.content.length > 5000) return undefined
     turns.push({ role: turn.role, content: turn.content.trim() })
   }
   if (turns[turns.length - 1]?.role !== 'user') return undefined

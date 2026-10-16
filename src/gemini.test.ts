@@ -78,6 +78,13 @@ describe('AI study response validation', () => {
     expect(() => safeParseGeminiJson('  ')).toThrow('Empty AI response received.')
   })
 
+  it('repairs unescaped quotes inside JSON string values', () => {
+    const rawText = '{"historicalBackground":"Roman law "adoptio" conferred family status."}'
+    expect(safeParseGeminiJson<{ historicalBackground: string }>(rawText)).toEqual({
+      historicalBackground: 'Roman law "adoptio" conferred family status.',
+    })
+  })
+
   it('sends Gemini word studies through the server proxy', async () => {
     const fetchStub = vi.fn().mockResolvedValue({
       ok: true,
