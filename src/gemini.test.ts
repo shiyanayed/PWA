@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { AiRequestError, askPhilologist, canUseOfflineFallback, generateStudy } from './gemini'
+import { AiRequestError, askPhilologist, canUseOfflineFallback, generateStudy, safeParseGeminiJson } from './gemini'
 import { GEMINI_MODELS } from './gemini-models'
 
 const validStudy = {
@@ -54,6 +54,28 @@ describe('AI study response validation', () => {
       body: expect.stringContaining('"provider":"claude"'),
     }))
     expect(fetchStub.mock.calls[0][1].body).toContain('"testament":"Greek"')
+  })
+
+  it('parses fenced JSON with a preamble and unescaped newlines in strings', async () => {
+    let rawText = JSON.stringify({ ...validStudy, historicalBackground: 'First line\nSecond line' })
+    rawText = rawText.replace('First line\\nSecond line', 'First line\nSecond line')
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ text: `Study result:\n\`\`\`json\n${rawText}\n\`\`\``, sources: [] }),
+    }))
+
+    const study = await generateStudy('gemini', 'faith', {
+      testament: 'Greek',
+      useSearchGrounding: false,
+      strictVerification: false,
+    })
+
+    expect(study.historicalBackground).toBe('First line\nSecond line')
+  })
+
+  it('parses JSON arrays and rejects empty AI responses', () => {
+    expect(safeParseGeminiJson<string[]>('```json\n["one", "two"]\n```')).toEqual(['one', 'two'])
+    expect(() => safeParseGeminiJson('  ')).toThrow('Empty AI response received.')
   })
 
   it('sends Gemini word studies through the server proxy', async () => {

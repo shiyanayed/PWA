@@ -21,10 +21,90 @@ export function canUseOfflineFallback(error: unknown): boolean {
   return error instanceof AiRequestError && error.offlineFallbackAvailable
 }
 
+export function safeParseGeminiJson<T = unknown>(rawText: string): T {
+  if (typeof rawText !== 'string' || !rawText.trim()) {
+    throw new Error('Empty AI response received.')
+  }
+
+  const cleaned = rawText.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim()
+  const candidate = extractJsonCandidate(cleaned)
+  const candidates = candidate && candidate !== cleaned ? [cleaned, candidate] : [cleaned]
+  let lastError: unknown
+
+  for (const text of candidates) {
+    for (const input of [text, sanitizeControlCharactersInJson(text)]) {
+      try {
+        return JSON.parse(input) as T
+      } catch (error) {
+        lastError = error
+      }
+    }
+  }
+
+  const message = lastError instanceof Error ? lastError.message : 'unknown parse error'
+  throw new Error(`Invalid JSON from AI: ${message}`)
+}
+
+function extractJsonCandidate(text: string): string | undefined {
+  for (let start = 0; start < text.length; start += 1) {
+    if (text[start] !== '{' && text[start] !== '[') continue
+
+    const closing: string[] = []
+    let insideString = false
+    let isEscaped = false
+    for (let index = start; index < text.length; index += 1) {
+      const char = text[index]
+      if (insideString) {
+        if (isEscaped) isEscaped = false
+        else if (char === '\\') isEscaped = true
+        else if (char === '"') insideString = false
+        continue
+      }
+      if (char === '"') {
+        insideString = true
+      } else if (char === '{') {
+        closing.push('}')
+      } else if (char === '[') {
+        closing.push(']')
+      } else if (char === '}' || char === ']') {
+        if (closing.pop() !== char) break
+        if (closing.length === 0) return text.slice(start, index + 1)
+      }
+    }
+  }
+  return undefined
+}
+
+function sanitizeControlCharactersInJson(jsonText: string): string {
+  let insideString = false
+  let isEscaped = false
+  let result = ''
+
+  for (let index = 0; index < jsonText.length; index += 1) {
+    const char = jsonText[index]
+    const code = jsonText.charCodeAt(index)
+
+    if (insideString && !isEscaped && code < 32) {
+      result += `\\u${code.toString(16).padStart(4, '0')}`
+    } else {
+      result += char
+    }
+
+    if (insideString) {
+      if (isEscaped) isEscaped = false
+      else if (char === '\\') isEscaped = true
+      else if (char === '"') insideString = false
+    } else if (char === '"') {
+      insideString = true
+    }
+  }
+
+  return result
+}
+
 function extractJson(text: string): unknown {
-  const cleaned = text.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '')
   try {
-    return JSON.parse(cleaned) as unknown
+    return safeParseGeminiJson(text)
   } catch (error) {
     throw new Error(`Gemini returned invalid JSON: ${error instanceof Error ? error.message : 'unknown parse error'}`)
   }

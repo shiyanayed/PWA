@@ -84,6 +84,7 @@ describe('AI proxy', () => {
     expect(JSON.stringify(response.result.body)).not.toContain('server-only-test-key')
     expect(upstreamFetch).toHaveBeenCalledOnce()
     expect(String(upstreamFetch.mock.calls[0][0])).toContain('/v1beta/models/gemini-2.0-flash:generateContent')
+    expect(JSON.parse(upstreamFetch.mock.calls[0][1].body).generationConfig.responseMimeType).toBe('application/json')
     expect(timeoutSpy).toHaveBeenCalledWith(60_000)
   })
 
