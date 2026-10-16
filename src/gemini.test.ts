@@ -106,6 +106,26 @@ describe('AI study response validation', () => {
     expect(fetchStub.mock.calls[0][1].body).toContain('"query":"faith"')
   })
 
+  it('uses an already-parsed study returned by the AI proxy', async () => {
+    const json = vi.fn().mockResolvedValue({
+      success: true,
+      study: validStudy,
+      sources: ['https://papyri.info/'],
+    })
+    const fetchStub = vi.fn().mockResolvedValue({ ok: true, json })
+    vi.stubGlobal('fetch', fetchStub)
+
+    const study = await generateStudy('gemini', 'faith', {
+      testament: 'Greek',
+      useSearchGrounding: false,
+      strictVerification: false,
+    })
+
+    expect(study.word).toBe('Faith')
+    expect(study.searchGroundingSources).toEqual(['https://papyri.info/'])
+    expect(json).toHaveBeenCalledOnce()
+  })
+
   it('sends Search grounding preference to the server proxy', async () => {
     const fetchStub = vi.fn().mockResolvedValue({
       ok: true,

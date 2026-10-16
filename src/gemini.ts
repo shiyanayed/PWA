@@ -209,12 +209,16 @@ export async function generateStudy(
   const payload = provider === 'groq' && options.groqApiKey?.trim()
       ? await requestGroqDirect(options.groqApiKey.trim(), PHILOLOGIST_SYSTEM_PROMPT, userTurn, true)
       : await requestProxy(responseBody)
-  if (typeof payload.text !== 'string' || !payload.text.trim()) throw new Error('The AI service returned an empty response.')
-  const text = payload.text.trim()
+  const study = payload.study ?? (
+    typeof payload.text === 'string' && payload.text.trim()
+      ? extractJson(payload.text.trim())
+      : undefined
+  )
+  if (!study) throw new Error('The AI service returned an empty response.')
   const actualSources = Array.isArray(payload.sources) && payload.sources.every((source) => typeof source === 'string')
     ? payload.sources
     : []
-  const generated = validateStudy(extractJson(text), options.testament, options.strictVerification, actualSources)
+  const generated = validateStudy(study, options.testament, options.strictVerification, actualSources)
   return {
     ...generated,
     id: `${generated.strongsNumber.toLowerCase()}-${Date.now()}`,
@@ -245,13 +249,21 @@ export async function askPhilologist(
   return payload.text.trim()
 }
 
-async function requestProxy(body: Record<string, unknown>): Promise<{ text?: unknown; sources?: unknown }> {
+type AiResponsePayload = {
+  study?: unknown
+  text?: unknown
+  sources?: unknown
+  error?: unknown
+  offlineFallbackAvailable?: unknown
+}
+
+async function requestProxy(body: Record<string, unknown>): Promise<AiResponsePayload> {
   const response = await fetch('/api/ai', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   })
-  let payload: { text?: unknown; sources?: unknown; error?: unknown; offlineFallbackAvailable?: unknown }
+  let payload: AiResponsePayload
   try {
     payload = await response.json() as typeof payload
   } catch {
@@ -273,7 +285,7 @@ async function requestGroqDirect(
   system: string,
   turns: ChatTurn[],
   jsonMode: boolean,
-): Promise<{ text?: unknown; sources?: unknown }> {
+): Promise<AiResponsePayload> {
   const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
