@@ -155,12 +155,13 @@ Google Search grounding is currently supported only for Gemini word-study reques
 
 The ordered candidate list is used by the Vercel server-side Gemini proxy:
 
-1. `gemini-2.0-flash`
-2. `gemini-1.5-flash`
-3. `gemini-2.0-flash-lite`
-4. `gemini-2.5-flash`
+1. `gemini-3.5-flash-lite`
+2. `gemini-flash-latest`
+3. `gemini-2.5-flash`
 
 These are configured candidate IDs, not a guarantee that each ID is currently available. In particular, API availability may vary by account, project, region, API version, model lifecycle, and feature support. Confirm the exact IDs available to the same Google AI Studio/Google Cloud project as the key when troubleshooting.
+
+The proxy error response on 2026-10-16 reported that `gemini-2.0-flash-lite` had been retired and explicitly recommended `gemini-3.5-flash-lite`; the current cascade therefore uses that replacement first.
 
 The Android blueprint's sample Retrofit endpoint uses `gemini-flash-latest`; the PWA does not call that Android code. Its own candidate list is the source of truth for PWA requests. Changing the Android repository or its key configuration does not change this PWA's Vercel function or browser client.
 

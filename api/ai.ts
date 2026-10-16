@@ -1,4 +1,5 @@
 import type { VercelRequest } from '@vercel/node'
+import { GEMINI_MODELS } from '../src/gemini-models.js'
 
 type AiProxyRequest = Pick<VercelRequest, 'method'> & {
   headers?: Record<string, string | string[] | undefined>
@@ -16,12 +17,6 @@ type AiProxyResponse = {
 }
 
 export const maxDuration = 60;
-
-const CANDIDATE_MODELS = [
-  "gemini-2.0-flash",
-  "gemini-1.5-flash",
-  "gemini-2.0-flash-lite"
-];
 
 export default async function handler(req: AiProxyRequest, res: AiProxyResponse) {
   res.setHeader("Access-Control-Allow-Origin", "*");
@@ -71,7 +66,7 @@ IMPORTANT JSON FORMATTING RULES:
 
   let lastFailure: any = null;
 
-  for (const model of CANDIDATE_MODELS) {
+  for (const model of GEMINI_MODELS) {
     const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
 
     try {
