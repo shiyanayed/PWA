@@ -227,10 +227,14 @@ async function requestGeminiWithFallback(
             body: JSON.stringify({
               system_instruction: { parts: [{ text: system }] },
               contents: turns.map((turn) => ({ role: turn.role === 'assistant' ? 'model' : 'user', parts: [{ text: turn.content }] })),
-              generationConfig: { ...(jsonMode ? { responseMimeType: 'application/json' } : {}), temperature: 0.2, maxOutputTokens: 4096 },
+              generationConfig: {
+                ...(jsonMode && !useSearchGrounding ? { responseMimeType: 'application/json' } : {}),
+                temperature: 0.2,
+                maxOutputTokens: 4096,
+              },
               ...(useSearchGrounding ? { tools: [{ google_search: {} }] } : {}),
             }),
-            signal: AbortSignal.timeout(5_000),
+            signal: AbortSignal.timeout(60_000),
           },
         )
       } catch {

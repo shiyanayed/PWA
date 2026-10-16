@@ -155,10 +155,9 @@ Google Search grounding is currently supported only for Gemini word-study reques
 
 The ordered candidate list is shared by the server and the browser-direct Gemini path:
 
-1. `gemini-3.8-flash`
-2. `gemini-flash-latest`
-3. `gemini-3.5-flash`
-4. `gemini-3.1-pro-preview`
+1. `gemini-flash-latest`
+2. `gemini-2.5-flash`
+3. `gemini-2.5-pro`
 
 These are configured candidate IDs, not a guarantee that each ID is currently available. In particular, API availability may vary by account, project, region, API version, model lifecycle, and feature support. Confirm the exact IDs available to the same Google AI Studio/Google Cloud project as the key when troubleshooting.
 
@@ -171,7 +170,9 @@ For each candidate, the client/server makes at most two attempts:
 - Network/timeout failure: retry once after one second, then continue.
 - Other HTTP errors (for example, an invalid request or rejected key): stop the cascade and report the error rather than treating it as temporary model load.
 
-Each upstream attempt has a five-second fetch timeout. In the worst case, eight attempts plus retry pauses can use approximately 44 seconds, below the `maxDuration: 60` function setting in [`vercel.json`](./vercel.json), excluding platform overhead.
+Each upstream attempt has a 60-second fetch timeout. The Vercel function's configured `maxDuration` is also 60 seconds; consequently, long or repeated timeouts may cause the platform to terminate a request before the complete multi-model cascade finishes. Immediate HTTP failures can still advance through the fallback list.
+
+When Search grounding is enabled, the Gemini request includes the Google Search tool and intentionally omits `responseMimeType: "application/json"` because Gemini does not support combining that response mode with the search tool. The prompt still requests strict JSON and the client validates the resulting text against the study schema.
 
 The cascade cannot fix an invalid/restricted API key, exhausted project quota, billing restrictions, disabled API access, unsupported grounding configuration, or a malformed request. The fallback models may also be unavailable to the same key. A fallback success response from the proxy includes the model that answered; the client currently uses the generated text and sources.
 

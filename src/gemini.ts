@@ -175,13 +175,13 @@ async function requestGeminiDirect(
               parts: [{ text: turn.content }],
             })),
             generationConfig: {
-              ...(jsonMode ? { responseMimeType: 'application/json' } : {}),
+              ...(jsonMode && !useSearchGrounding ? { responseMimeType: 'application/json' } : {}),
               temperature: 0.2,
               maxOutputTokens: 4096,
             },
             ...(useSearchGrounding ? { tools: [{ google_search: {} }] } : {}),
           }),
-          signal: AbortSignal.timeout(5000),
+          signal: AbortSignal.timeout(60_000),
         })
       } catch (cause) {
         lastFailure = new AiRequestError(

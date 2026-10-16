@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { AiRequestError, askPhilologist, canUseOfflineFallback, generateStudy } from './gemini'
+import { AiRequestError, askPhilologist, canUseOfflineFallback, generateStudy, GEMINI_MODELS } from './gemini'
 
 const validStudy = {
   word: 'Faith',
@@ -25,6 +25,15 @@ describe('AI study response validation', () => {
   afterEach(() => {
     vi.unstubAllGlobals()
     vi.useRealTimers()
+    vi.restoreAllMocks()
+  })
+
+  it('uses the configured public Gemini model IDs in the intended order', () => {
+    expect(GEMINI_MODELS).toEqual([
+      'gemini-flash-latest',
+      'gemini-2.5-flash',
+      'gemini-2.5-pro',
+    ])
   })
 
   it('accepts a valid response and attaches AI provenance', async () => {
@@ -61,12 +70,38 @@ describe('AI study response validation', () => {
 
     expect(study.word).toBe('Faith')
     expect(fetchStub).toHaveBeenCalledOnce()
-    expect(fetchStub.mock.calls[0][0]).toContain('/v1beta/models/gemini-3.8-flash:generateContent')
+    expect(fetchStub.mock.calls[0][0]).toContain('/v1beta/models/gemini-flash-latest:generateContent')
     expect(fetchStub.mock.calls[0][1].headers).toEqual({
       'Content-Type': 'application/json',
       'x-goog-api-key': 'personal-test-key',
     })
     expect(fetchStub.mock.calls[0][0]).not.toContain('personal-test-key')
+  })
+
+  it('sends grounded personal-key studies without JSON MIME mode and allows 60 seconds', async () => {
+    const timeoutSpy = vi.spyOn(AbortSignal, 'timeout').mockReturnValue(new AbortController().signal)
+    const fetchStub = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        candidates: [{
+          content: { parts: [{ text: JSON.stringify(validStudy) }] },
+          groundingMetadata: { groundingChunks: [{ web: { uri: 'https://papyri.info/' } }] },
+        }],
+      }),
+    })
+    vi.stubGlobal('fetch', fetchStub)
+
+    await generateStudy('gemini', 'faith', {
+      testament: 'Greek',
+      useSearchGrounding: true,
+      strictVerification: false,
+      geminiApiKey: 'personal-test-key',
+    })
+
+    const requestBody = JSON.parse(fetchStub.mock.calls[0][1].body)
+    expect(requestBody.generationConfig).not.toHaveProperty('responseMimeType')
+    expect(requestBody.tools).toEqual([{ google_search: {} }])
+    expect(timeoutSpy).toHaveBeenCalledWith(60_000)
   })
 
   it('retries a transient personal-key Gemini failure before accepting the response', async () => {
@@ -118,8 +153,8 @@ describe('AI study response validation', () => {
     })
 
     expect(fetchStub).toHaveBeenCalledTimes(2)
-    expect(fetchStub.mock.calls[0][0]).toContain('gemini-3.8-flash')
-    expect(fetchStub.mock.calls[1][0]).toContain('gemini-flash-latest')
+    expect(fetchStub.mock.calls[0][0]).toContain('gemini-flash-latest')
+    expect(fetchStub.mock.calls[1][0]).toContain('gemini-2.5-flash')
   })
 
   it('only marks exhausted Gemini model outages as eligible for offline fallback', async () => {
@@ -291,7 +326,7 @@ describe('AI study response validation', () => {
       .resolves.toBe('Direct Gemini answer.')
 
     expect(fetchStub).toHaveBeenCalledOnce()
-    expect(fetchStub.mock.calls[0][0]).toContain('gemini-3.8-flash:generateContent')
+    expect(fetchStub.mock.calls[0][0]).toContain('gemini-flash-latest:generateContent')
     expect(fetchStub.mock.calls[0][1].headers['x-goog-api-key']).toBe('personal-test-key')
     expect(fetchStub.mock.calls[0][1].body).toContain('Explain the word.')
   })

@@ -27,6 +27,7 @@ describe('AI proxy', () => {
   afterEach(() => {
     vi.unstubAllGlobals()
     vi.useRealTimers()
+    vi.restoreAllMocks()
     delete process.env.GEMINI_API_KEY
     delete process.env.ANTHROPIC_API_KEY
     delete process.env.GROQ_API_KEY
@@ -64,6 +65,7 @@ describe('AI proxy', () => {
 
   it('routes study generation to Gemini without returning provider credentials', async () => {
     process.env.GEMINI_API_KEY = 'server-only-test-key'
+    const timeoutSpy = vi.spyOn(AbortSignal, 'timeout').mockReturnValue(new AbortController().signal)
     const upstreamFetch = vi.fn().mockResolvedValue({
       ok: true,
       json: async () => ({ candidates: [{ content: { parts: [{ text: '{"word":"Faith"}' }] } }] }),
@@ -78,10 +80,35 @@ describe('AI proxy', () => {
     }, response)
 
     expect(response.result.statusCode).toBe(200)
-    expect(response.result.body).toEqual({ text: '{"word":"Faith"}', sources: [], model: 'gemini-3.8-flash' })
+    expect(response.result.body).toEqual({ text: '{"word":"Faith"}', sources: [], model: 'gemini-flash-latest' })
     expect(JSON.stringify(response.result.body)).not.toContain('server-only-test-key')
     expect(upstreamFetch).toHaveBeenCalledOnce()
-    expect(String(upstreamFetch.mock.calls[0][0])).toContain('/v1beta/models/gemini-3.8-flash:generateContent')
+    expect(String(upstreamFetch.mock.calls[0][0])).toContain('/v1beta/models/gemini-flash-latest:generateContent')
+    expect(timeoutSpy).toHaveBeenCalledWith(60_000)
+  })
+
+  it('omits JSON MIME mode when proxy Gemini study uses Search grounding', async () => {
+    process.env.GEMINI_API_KEY = 'server-only-test-key'
+    const upstreamFetch = vi.fn().mockImplementation(async (_url: string, options: RequestInit) => ({
+      ok: true,
+      json: async () => {
+        const requestBody = JSON.parse(options.body as string)
+        expect(requestBody.generationConfig).not.toHaveProperty('responseMimeType')
+        expect(requestBody.tools).toEqual([{ google_search: {} }])
+        return { candidates: [{ content: { parts: [{ text: '{"word":"Faith"}' }] } }] }
+      },
+    }))
+    vi.stubGlobal('fetch', upstreamFetch)
+
+    const response = responseRecorder()
+    await handler({
+      method: 'POST',
+      headers: { host: 'example.test', origin: 'https://example.test', 'x-forwarded-for': '192.0.2.42' },
+      body: { mode: 'study', provider: 'gemini', query: 'faith', testament: 'Greek', useSearchGrounding: true },
+    }, response)
+
+    expect(response.result.statusCode).toBe(200)
+    expect(upstreamFetch).toHaveBeenCalledOnce()
   })
 
   it('retries Gemini quota failures, returns retry delay, and marks fallback eligibility', async () => {
@@ -112,7 +139,7 @@ describe('AI proxy', () => {
       error: expect.stringContaining('Quota exceeded for metric requests_per_minute.'),
       offlineFallbackAvailable: true,
     })
-    expect(upstreamFetch).toHaveBeenCalledTimes(8)
+    expect(upstreamFetch).toHaveBeenCalledTimes(6)
     expect(JSON.stringify(response.result.body)).not.toContain('server-only-test-key')
   })
 
@@ -140,9 +167,9 @@ describe('AI proxy', () => {
 
     expect(response.result.statusCode).toBe(200)
     expect(upstreamFetch).toHaveBeenCalledTimes(2)
-    expect(String(upstreamFetch.mock.calls[0][0])).toContain('/models/gemini-3.8-flash:')
-    expect(String(upstreamFetch.mock.calls[1][0])).toContain('/models/gemini-flash-latest:')
-    expect(response.result.body).toEqual({ text: '{"word":"Faith"}', sources: [], model: 'gemini-flash-latest' })
+    expect(String(upstreamFetch.mock.calls[0][0])).toContain('/models/gemini-flash-latest:')
+    expect(String(upstreamFetch.mock.calls[1][0])).toContain('/models/gemini-2.5-flash:')
+    expect(response.result.body).toEqual({ text: '{"word":"Faith"}', sources: [], model: 'gemini-2.5-flash' })
   })
 
   it('rejects missing or invalid testament selections before contacting a provider', async () => {
