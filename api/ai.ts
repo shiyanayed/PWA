@@ -1,4 +1,5 @@
 import { CHAT_SYSTEM_PROMPT, PHILOLOGIST_SYSTEM_PROMPT } from '../src/prompts.js'
+import { GEMINI_MODELS } from '../src/gemini-models.js'
 
 type Provider = 'gemini' | 'claude' | 'groq' | 'grok'
 type Turn = { role: 'user' | 'assistant'; content: string }
@@ -20,6 +21,7 @@ class ProviderHttpError extends Error {
     readonly status: number,
     message: string,
     readonly retryAfter?: string,
+    readonly offlineFallbackAvailable = false,
   ) {
     super(message)
     this.name = 'ProviderHttpError'
@@ -137,6 +139,14 @@ export default async function handler(request: Request, response: Response): Pro
       const detail = error.message ? ` Provider detail: ${error.message}` : ''
       response.status(429).json({
         error: `${providerLabel(provider)} rate limit or quota reached. Check the provider project’s limits and billing.${detail}`,
+        offlineFallbackAvailable: error.offlineFallbackAvailable,
+      })
+      return
+    }
+    if (error instanceof ProviderHttpError && error.offlineFallbackAvailable) {
+      response.status(503).json({
+        error: `${providerLabel(provider)} is temporarily unavailable after trying the configured Gemini models. ${error.message}`,
+        offlineFallbackAvailable: true,
       })
       return
     }
@@ -157,14 +167,7 @@ async function requestProvider(
   let payload: Record<string, unknown>
 
   if (provider === 'gemini') {
-    endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key=${encodeURIComponent(key)}`
-    headers = { 'Content-Type': 'application/json' }
-    payload = {
-      system_instruction: { parts: [{ text: system }] },
-      contents: turns.map((turn) => ({ role: turn.role === 'assistant' ? 'model' : 'user', parts: [{ text: turn.content }] })),
-      generationConfig: { ...(jsonMode ? { responseMimeType: 'application/json' } : {}), temperature: 0.2, maxOutputTokens: 4096 },
-      ...(useSearchGrounding ? { tools: [{ google_search: {} }] } : {}),
-    }
+    return requestGeminiWithFallback(key, system, turns, jsonMode, useSearchGrounding)
   } else if (provider === 'claude') {
     endpoint = 'https://api.anthropic.com/v1/messages'
     headers = { 'Content-Type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01' }
@@ -196,14 +199,81 @@ async function requestProvider(
     )
   }
   const result = await upstream.json() as Record<string, unknown>
-  const text = provider === 'gemini'
-    ? extractGeminiText(result)
-    : provider === 'claude'
-      ? extractClaudeText(result)
-      : extractOpenAiText(result)
+  const text = provider === 'claude'
+    ? extractClaudeText(result)
+    : extractOpenAiText(result)
   if (!text) throw new Error('Provider response contained no text')
-  const sources = provider === 'gemini' && useSearchGrounding ? extractGeminiSources(result) : []
-  return { text, sources }
+  return { text, sources: [] }
+}
+
+async function requestGeminiWithFallback(
+  key: string,
+  system: string,
+  turns: Turn[],
+  jsonMode: boolean,
+  useSearchGrounding: boolean,
+): Promise<{ text: string; sources: string[]; model: string }> {
+  let lastError: ProviderHttpError | undefined
+
+  for (const model of GEMINI_MODELS) {
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      let upstream: globalThis.Response
+      try {
+        upstream = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(key)}`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              system_instruction: { parts: [{ text: system }] },
+              contents: turns.map((turn) => ({ role: turn.role === 'assistant' ? 'model' : 'user', parts: [{ text: turn.content }] })),
+              generationConfig: { ...(jsonMode ? { responseMimeType: 'application/json' } : {}), temperature: 0.2, maxOutputTokens: 4096 },
+              ...(useSearchGrounding ? { tools: [{ google_search: {} }] } : {}),
+            }),
+            signal: AbortSignal.timeout(5_000),
+          },
+        )
+      } catch {
+        lastError = new ProviderHttpError(503, 'Gemini request timed out or failed.', undefined, true)
+        if (attempt === 0) await delay(1000)
+        continue
+      }
+      if (upstream.ok) {
+        const result = await upstream.json() as Record<string, unknown>
+        const text = extractGeminiText(result)
+        if (!text) throw new Error(`Gemini model ${model} returned no text.`)
+        return {
+          text,
+          sources: useSearchGrounding ? extractGeminiSources(result) : [],
+          model,
+        }
+      }
+
+      const providerMessage = await extractProviderErrorMessage(upstream, key)
+      const failure = new ProviderHttpError(
+        upstream.status,
+        providerMessage ?? `Provider returned HTTP ${upstream.status}`,
+        upstream.headers.get('retry-after') ?? undefined,
+        upstream.status === 404 || upstream.status === 429 || upstream.status === 500 || upstream.status === 503,
+      )
+      lastError = failure
+
+      if (upstream.status === 404) break
+      if (![429, 500, 503].includes(upstream.status)) throw failure
+      if (attempt === 0) await delay(1000)
+    }
+  }
+
+  throw new ProviderHttpError(
+    lastError?.status === 429 ? 429 : 503,
+    lastError?.message ?? 'No configured Gemini model completed the request.',
+    lastError?.retryAfter,
+    true,
+  )
+}
+
+function delay(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds))
 }
 
 async function extractProviderErrorMessage(upstream: globalThis.Response, key: string): Promise<string | undefined> {

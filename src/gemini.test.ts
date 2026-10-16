@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { askPhilologist, generateStudy } from './gemini'
+import { AiRequestError, askPhilologist, canUseOfflineFallback, generateStudy } from './gemini'
 
 const validStudy = {
   word: 'Faith',
@@ -22,7 +22,10 @@ const validStudy = {
 }
 
 describe('AI study response validation', () => {
-  afterEach(() => vi.unstubAllGlobals())
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.useRealTimers()
+  })
 
   it('accepts a valid response and attaches AI provenance', async () => {
     const fetchStub = vi.fn().mockResolvedValue({
@@ -64,6 +67,119 @@ describe('AI study response validation', () => {
       'x-goog-api-key': 'personal-test-key',
     })
     expect(fetchStub.mock.calls[0][0]).not.toContain('personal-test-key')
+  })
+
+  it('retries a transient personal-key Gemini failure before accepting the response', async () => {
+    const fetchStub = vi.fn()
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 503,
+        json: async () => ({ error: { message: 'Model is busy.' } }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ candidates: [{ content: { parts: [{ text: JSON.stringify(validStudy) }] } }] }),
+      })
+    vi.stubGlobal('fetch', fetchStub)
+    vi.useFakeTimers()
+
+    const request = generateStudy('gemini', 'faith', {
+      testament: 'Greek',
+      useSearchGrounding: false,
+      strictVerification: false,
+      geminiApiKey: 'personal-test-key',
+    })
+    await vi.runAllTimersAsync()
+    const study = await request
+
+    expect(study.word).toBe('Faith')
+    expect(fetchStub).toHaveBeenCalledTimes(2)
+    expect(fetchStub.mock.calls[0][0]).toBe(fetchStub.mock.calls[1][0])
+  })
+
+  it('skips unavailable Gemini model IDs for personal-key requests', async () => {
+    const fetchStub = vi.fn()
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 404,
+        json: async () => ({ error: { message: 'Model not found.' } }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ candidates: [{ content: { parts: [{ text: JSON.stringify(validStudy) }] } }] }),
+      })
+    vi.stubGlobal('fetch', fetchStub)
+
+    await generateStudy('gemini', 'faith', {
+      testament: 'Greek',
+      useSearchGrounding: false,
+      strictVerification: false,
+      geminiApiKey: 'personal-test-key',
+    })
+
+    expect(fetchStub).toHaveBeenCalledTimes(2)
+    expect(fetchStub.mock.calls[0][0]).toContain('gemini-3.8-flash')
+    expect(fetchStub.mock.calls[1][0]).toContain('gemini-flash-latest')
+  })
+
+  it('only marks exhausted Gemini model outages as eligible for offline fallback', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: false,
+      status: 503,
+      json: async () => ({ error: { message: 'Busy.' } }),
+    }))
+    vi.useFakeTimers()
+
+    const request = generateStudy('gemini', 'faith', {
+      testament: 'Greek',
+      useSearchGrounding: false,
+      strictVerification: false,
+      geminiApiKey: 'personal-test-key',
+    })
+    const assertion = expect(request).rejects.toMatchObject({ offlineFallbackAvailable: true })
+    await vi.runAllTimersAsync()
+    await assertion
+    expect(canUseOfflineFallback(new AiRequestError('Temporary outage.', 503, true))).toBe(true)
+    expect(canUseOfflineFallback(new AiRequestError('Invalid request.', 400, false))).toBe(false)
+    expect(canUseOfflineFallback(new Error('Unrelated failure.'))).toBe(false)
+  })
+
+  it('preserves the server cascade fallback signal for proxy requests', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: false,
+      status: 503,
+      json: async () => ({ error: 'Gemini models are unavailable.', offlineFallbackAvailable: true }),
+    }))
+
+    const request = generateStudy('gemini', 'faith', {
+      testament: 'Greek',
+      useSearchGrounding: false,
+      strictVerification: false,
+    })
+    await expect(request).rejects.toMatchObject({
+      status: 503,
+      offlineFallbackAvailable: true,
+    })
+  })
+
+  it('does not mark non-retryable personal-key Gemini errors for offline fallback', async () => {
+    const fetchStub = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 400,
+      json: async () => ({ error: { message: 'Invalid request.' } }),
+    })
+    vi.stubGlobal('fetch', fetchStub)
+
+    await expect(generateStudy('gemini', 'faith', {
+      testament: 'Greek',
+      useSearchGrounding: false,
+      strictVerification: false,
+      geminiApiKey: 'personal-test-key',
+    })).rejects.toMatchObject({
+      status: 400,
+      offlineFallbackAvailable: false,
+    })
+    expect(fetchStub).toHaveBeenCalledOnce()
   })
 
   it('uses an optional personal Groq key directly for word studies', async () => {

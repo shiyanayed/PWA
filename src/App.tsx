@@ -6,7 +6,7 @@ import {
   Settings2, ShieldCheck, Share2, Sparkles, Star, Trash2, Upload, Volume2, X,
 } from 'lucide-react'
 import { db, initializeKnowledgeBase } from './db'
-import { askPhilologist, generateStudy, type AiProvider, type ChatTurn } from './gemini'
+import { askPhilologist, canUseOfflineFallback, generateStudy, type AiProvider, type ChatTurn } from './gemini'
 import { auditSources } from './trust'
 import { patristicWitnesses, type PatristicEpoch } from './patristic'
 import { createLexiconFallbackStudy, findLocalStudy } from './offline'
@@ -156,13 +156,16 @@ function App() {
       try {
         result = await generateStudy(provider, term, { testament: selectedTestament, useSearchGrounding, strictVerification, geminiApiKey, groqApiKey })
       } catch (cause) {
-        if (!local.entry) throw cause
+        if (!canUseOfflineFallback(cause)) throw cause
+        if (!local.entry) {
+          throw new Error('Gemini is temporarily unavailable after trying the configured models. No matching bundled lexicon entry is available offline.')
+        }
         result = createLexiconFallbackStudy(local.entry)
         await db.studies.put(result)
         await refresh()
         setSelectedStudyId(result.id)
         setQuery('')
-        setNotice(`AI request failed (${errorMessage(cause)}). Showing a lexicon-only offline entry for ${local.entry.code}; it contains no generated historical interpretation.`)
+        setNotice(`Gemini models are temporarily unavailable. Showing the bundled lexicon-only entry for ${local.entry.code}; it is not a complete word study or a verified historical interpretation.`)
         return
       }
       await db.studies.put(result)
