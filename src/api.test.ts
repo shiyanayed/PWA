@@ -80,10 +80,10 @@ describe('AI proxy', () => {
     }, response)
 
     expect(response.result.statusCode).toBe(200)
-    expect(response.result.body).toEqual({ text: '{"word":"Faith"}', sources: [], model: 'gemini-flash-latest' })
+    expect(response.result.body).toEqual({ text: '{"word":"Faith"}', sources: [], model: 'gemini-2.0-flash' })
     expect(JSON.stringify(response.result.body)).not.toContain('server-only-test-key')
     expect(upstreamFetch).toHaveBeenCalledOnce()
-    expect(String(upstreamFetch.mock.calls[0][0])).toContain('/v1beta/models/gemini-flash-latest:generateContent')
+    expect(String(upstreamFetch.mock.calls[0][0])).toContain('/v1beta/models/gemini-2.0-flash:generateContent')
     expect(timeoutSpy).toHaveBeenCalledWith(60_000)
   })
 
@@ -109,6 +109,32 @@ describe('AI proxy', () => {
 
     expect(response.result.statusCode).toBe(200)
     expect(upstreamFetch).toHaveBeenCalledOnce()
+  })
+
+  it('stops the Gemini cascade when Google rejects the server API key', async () => {
+    process.env.GEMINI_API_KEY = 'server-only-test-key'
+    const upstreamFetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 403,
+      headers: { get: () => null },
+      json: async () => ({ error: { message: 'API key is not authorized.' } }),
+    })
+    vi.stubGlobal('fetch', upstreamFetch)
+
+    const response = responseRecorder()
+    await handler({
+      method: 'POST',
+      headers: { host: 'example.test', origin: 'https://example.test', 'x-forwarded-for': '192.0.2.43' },
+      body: { mode: 'study', provider: 'gemini', query: 'faith', testament: 'Greek' },
+    }, response)
+
+    expect(response.result.statusCode).toBe(403)
+    expect(response.result.body).toEqual({
+      error: 'Gemini rejected the API key or denied access. API key is not authorized.',
+      offlineFallbackAvailable: false,
+    })
+    expect(upstreamFetch).toHaveBeenCalledOnce()
+    expect(JSON.stringify(response.result.body)).not.toContain('server-only-test-key')
   })
 
   it('retries Gemini quota failures, returns retry delay, and marks fallback eligibility', async () => {
@@ -139,7 +165,7 @@ describe('AI proxy', () => {
       error: expect.stringContaining('Quota exceeded for metric requests_per_minute.'),
       offlineFallbackAvailable: true,
     })
-    expect(upstreamFetch).toHaveBeenCalledTimes(6)
+    expect(upstreamFetch).toHaveBeenCalledTimes(8)
     expect(JSON.stringify(response.result.body)).not.toContain('server-only-test-key')
   })
 
@@ -167,9 +193,9 @@ describe('AI proxy', () => {
 
     expect(response.result.statusCode).toBe(200)
     expect(upstreamFetch).toHaveBeenCalledTimes(2)
-    expect(String(upstreamFetch.mock.calls[0][0])).toContain('/models/gemini-flash-latest:')
-    expect(String(upstreamFetch.mock.calls[1][0])).toContain('/models/gemini-2.5-flash:')
-    expect(response.result.body).toEqual({ text: '{"word":"Faith"}', sources: [], model: 'gemini-2.5-flash' })
+    expect(String(upstreamFetch.mock.calls[0][0])).toContain('/models/gemini-2.0-flash:')
+    expect(String(upstreamFetch.mock.calls[1][0])).toContain('/models/gemini-1.5-flash:')
+    expect(response.result.body).toEqual({ text: '{"word":"Faith"}', sources: [], model: 'gemini-1.5-flash' })
   })
 
   it('rejects missing or invalid testament selections before contacting a provider', async () => {

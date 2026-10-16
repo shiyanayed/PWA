@@ -30,9 +30,10 @@ describe('AI study response validation', () => {
 
   it('uses the configured public Gemini model IDs in the intended order', () => {
     expect(GEMINI_MODELS).toEqual([
-      'gemini-flash-latest',
+      'gemini-2.0-flash',
+      'gemini-1.5-flash',
+      'gemini-2.0-flash-lite',
       'gemini-2.5-flash',
-      'gemini-2.5-pro',
     ])
   })
 
@@ -70,7 +71,7 @@ describe('AI study response validation', () => {
 
     expect(study.word).toBe('Faith')
     expect(fetchStub).toHaveBeenCalledOnce()
-    expect(fetchStub.mock.calls[0][0]).toContain('/v1beta/models/gemini-flash-latest:generateContent')
+    expect(fetchStub.mock.calls[0][0]).toContain('/v1beta/models/gemini-2.0-flash:generateContent')
     expect(fetchStub.mock.calls[0][1].headers).toEqual({
       'Content-Type': 'application/json',
       'x-goog-api-key': 'personal-test-key',
@@ -153,8 +154,8 @@ describe('AI study response validation', () => {
     })
 
     expect(fetchStub).toHaveBeenCalledTimes(2)
-    expect(fetchStub.mock.calls[0][0]).toContain('gemini-flash-latest')
-    expect(fetchStub.mock.calls[1][0]).toContain('gemini-2.5-flash')
+    expect(fetchStub.mock.calls[0][0]).toContain('gemini-2.0-flash')
+    expect(fetchStub.mock.calls[1][0]).toContain('gemini-1.5-flash')
   })
 
   it('only marks exhausted Gemini model outages as eligible for offline fallback', async () => {
@@ -326,7 +327,7 @@ describe('AI study response validation', () => {
       .resolves.toBe('Direct Gemini answer.')
 
     expect(fetchStub).toHaveBeenCalledOnce()
-    expect(fetchStub.mock.calls[0][0]).toContain('gemini-flash-latest:generateContent')
+    expect(fetchStub.mock.calls[0][0]).toContain('gemini-2.0-flash:generateContent')
     expect(fetchStub.mock.calls[0][1].headers['x-goog-api-key']).toBe('personal-test-key')
     expect(fetchStub.mock.calls[0][1].body).toContain('Explain the word.')
   })

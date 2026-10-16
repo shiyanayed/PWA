@@ -143,6 +143,13 @@ export default async function handler(request: Request, response: Response): Pro
       })
       return
     }
+    if (error instanceof ProviderHttpError && (error.status === 401 || error.status === 403)) {
+      response.status(error.status).json({
+        error: `${providerLabel(provider)} rejected the API key or denied access. ${error.message}`,
+        offlineFallbackAvailable: false,
+      })
+      return
+    }
     if (error instanceof ProviderHttpError && error.offlineFallbackAvailable) {
       response.status(503).json({
         error: `${providerLabel(provider)} is temporarily unavailable after trying the configured Gemini models. ${error.message}`,

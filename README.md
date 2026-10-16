@@ -155,9 +155,10 @@ Google Search grounding is currently supported only for Gemini word-study reques
 
 The ordered candidate list is shared by the server and the browser-direct Gemini path:
 
-1. `gemini-flash-latest`
-2. `gemini-2.5-flash`
-3. `gemini-2.5-pro`
+1. `gemini-2.0-flash`
+2. `gemini-1.5-flash`
+3. `gemini-2.0-flash-lite`
+4. `gemini-2.5-flash`
 
 These are configured candidate IDs, not a guarantee that each ID is currently available. In particular, API availability may vary by account, project, region, API version, model lifecycle, and feature support. Confirm the exact IDs available to the same Google AI Studio/Google Cloud project as the key when troubleshooting.
 
@@ -169,6 +170,7 @@ For each candidate, the client/server makes at most two attempts:
 - HTTP 429, 500, or 503: wait one second, retry that candidate once, then continue to the next candidate if it still fails.
 - Network/timeout failure: retry once after one second, then continue.
 - Other HTTP errors (for example, an invalid request or rejected key): stop the cascade and report the error rather than treating it as temporary model load.
+- HTTP 401/403 responses: stop immediately and report that the key was rejected or access denied; trying another model cannot repair key authorization.
 
 Each upstream attempt has a 60-second fetch timeout. The Vercel function's configured `maxDuration` is also 60 seconds; consequently, long or repeated timeouts may cause the platform to terminate a request before the complete multi-model cascade finishes. Immediate HTTP failures can still advance through the fallback list.
 
