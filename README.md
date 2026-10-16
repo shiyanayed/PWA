@@ -1,64 +1,346 @@
 # Word Context PWA
 
-Word Context is an offline-oriented progressive web app for studying biblical language in its historical, cultural, legal, and literary settings. This repository adapts the Android-oriented [Word Context specification](https://github.com/shiyanayed/Word-Context) to browser capabilities.
+Word Context is an offline-oriented progressive web app for studying biblical words in their linguistic, historical, cultural, legal, and literary settings. This repository adapts the Android-focused [Word Context master blueprint](https://github.com/shiyanayed/Word-Context) to a browser and Vercel deployment.
 
-## Run locally
+This README documents the implementation that is in this repository, including the actual AI request paths and their failure modes. It is intended to help a developer or another AI agent reproduce, diagnose, and fix problems without assuming that the Android architecture or API configuration applies unchanged to the PWA.
+
+## Contents
+
+- [Product and implementation scope](#product-and-implementation-scope)
+- [Quick start](#quick-start)
+- [Architecture and important files](#architecture-and-important-files)
+- [AI providers and request flow](#ai-providers-and-request-flow)
+- [Gemini model cascade](#gemini-model-cascade)
+- [Deploying to Vercel](#deploying-to-vercel)
+- [Configuring provider keys](#configuring-provider-keys)
+- [AI/API troubleshooting](#aiapi-troubleshooting)
+- [Offline behavior and local data](#offline-behavior-and-local-data)
+- [Features and known gaps against Android](#features-and-known-gaps-against-android)
+- [Testing and maintenance](#testing-and-maintenance)
+
+## Product and implementation scope
+
+The app helps users investigate how a biblical word may have functioned in its original language and historical setting. It includes local curated study material, a small Strong's lexicon, AI-generated studies, contextual AI chat, source-domain scoring, and personal study tools.
+
+The PWA is not a complete port of the Android app. Android Room, Retrofit, Jetpack Compose, native share intents, and Android-specific lifecycle behavior have browser equivalents or limitations described below. This repository uses React, TypeScript, Vite, IndexedDB, browser APIs, and a Vercel serverless function.
+
+## Quick start
+
+Requirements: Node.js and npm compatible with the installed Vite/Vitest toolchain.
 
 ```sh
 npm install
 npm run dev
 ```
 
-The Vite server hosts the client. The AI endpoint is a Vercel serverless function under `api/ai.ts`; run the full deployment runtime locally with the Vercel CLI (`vercel dev`) to test AI requests. `npm run build` validates the client and generates the PWA assets.
+`npm run dev` runs the Vite client only. It does **not** run the Vercel API function. The app shell can load locally, but requests to `/api/ai` will not work using Vite alone.
 
-## Deploy and configure AI
+To run the client and Vercel function locally, install or invoke the Vercel CLI and use:
 
-Deploy with Vercel. Add whichever provider secrets you intend to use as server environment variables:
+```sh
+npx vercel dev
+```
 
-| Provider | Environment variable |
-| --- | --- |
-| Google Gemini | `GEMINI_API_KEY` |
-| Anthropic Claude | `ANTHROPIC_API_KEY` |
-| Groq | `GROQ_API_KEY` |
-| xAI Grok | `XAI_API_KEY` |
+Configure the provider environment variables in the Vercel project or its local development environment before expecting proxy requests to succeed. Do not commit local environment files.
 
-Set `APP_ORIGIN` to the exact deployed origin (for example, `https://word-context.example`) to restrict requests to that origin. Server-managed keys must never be placed in `VITE_*` variables or committed to source control. The API applies input limits, same-origin checks, a best-effort per-instance rate limit, and upstream timeouts. For a public multi-user deployment, put a durable rate limiter and user authentication in front of the function; per-instance memory limits are not a global abuse-prevention system.
-
-For a personal deployment, a Gemini or Groq key can alternatively be entered in **Settings**. When present, requests for that provider go directly from that browser to Google or Groq rather than through the Vercel function. The key is stored in that browser's IndexedDB and is accessible to anyone or any script/extension running in that browser; use only on a trusted personal device. Clear the key and save settings to return that provider's requests to the Vercel proxy. Direct browser requests do not avoid provider quota limits.
-
-## Current implementation
-
-- React, TypeScript, Vite, Tailwind, and a PWA service worker.
-- Dexie/IndexedDB stores curated studies, lexicon entries, dossiers, and preferences locally.
-- The Study Hub, Apologetics, Lexicon, Linguistic Notes, Patristic Archive, Notebook, and Settings views are available.
-- Study Hub searches let users choose Old Testament (Hebrew) or New Testament (Greek); Strong's `H…`/`G…` queries automatically use the matching testament.
-- Gemini 3.8 Flash, Claude, Groq, and Grok can be selected through the AI proxy for both word-study generation and chat; the server needs a secret configured for the chosen provider. Personal Gemini and Groq keys can alternatively be saved in browser settings for direct provider requests.
-- Each open word study has an “Ask AI about this word” action that includes the study’s language, Strong's number, lexical gloss, and summary as context for the chat.
-- The proxy supports strict-JSON study generation and conversational requests. Gemini can use Google Search grounding for study generation; grounded URLs come from provider response metadata.
-- Provider HTTP 429 responses are returned with the provider's bounded error detail and any `Retry-After` delay so quota and rate-limit issues can be diagnosed.
-- Gemini requests try `gemini-3.8-flash`, `gemini-flash-latest`, `gemini-3.5-flash`, and `gemini-3.1-pro-preview` in order. Transient 429, 500, and 503 responses are retried once after a short delay; unavailable model IDs are skipped. When every configured Gemini model is unavailable, a matching bundled Strong's entry may be shown as an explicitly labeled lexicon-only fallback. It is not a complete word study or a verified historical interpretation; unrelated request errors do not trigger this fallback.
-- Local study lookup happens before AI generation, so an already saved matching local study opens without an AI request.
-- Source host scoring, strict trusted-domain filtering, two themes, favorites, per-study notes, user tags, and tag filtering are implemented.
-- The language-notes catalogue covers five source-linked cases: euphemistic usage (H1288), a rare sense (H2617), translation range (G1242), and contextual polysemy (G2205, G5331). Notes appear both in the catalogue and with matching studies; they are not presented as a list of proven contronyms.
-- Browser onboarding and methodology disclosures are available. Speech uses browser text-to-speech where supported.
-- Nine patristic excerpts link to their cited English translations across the Apostolic, Ante-Nicene, and Nicene eras; copy, Web Share, and clipboard fallback are available.
-- Study exports include a sermon outline, academic brief, and pocket card. An imported Strong's JSON pack can be stored locally in IndexedDB.
-
-### Strong's JSON import format
-
-Lexicon import accepts a JSON array. Every entry must include `code`, `testament`, `lemma`, `transliteration`, `pronunciation`, `definition`, `derivation`, `partOfSpeech`, and integer `kjvCount`; `linkedStudy` is optional. The code prefix must match `Greek` (`G…`) or `Hebrew` (`H…`). Imports are limited to 12 MB and 20,000 entries. Review the dataset's license and source before importing; imported data stays local to the browser.
-
-## Specification coverage and known gaps
-
-The Android blueprint includes features that do not have one-to-one browser equivalents. Android Room is represented by IndexedDB; Android share intents should use the Web Share API with clipboard fallback; native speech and installation behavior depend on browser support.
-
-The current PWA is not yet feature-complete against the blueprint. The bundled Strong's entries are a small curated subset, not an exhaustive scholarly dictionary or complete concordance; obtaining and redistributing a genuinely exhaustive, appropriately licensed data pack remains outstanding. The patristic archive currently contains nine source-linked English excerpts, not the complete requested corpus. The language-notes catalogue currently has five examples, not an exhaustive anomaly database; it distinguishes rare senses and contextual polysemy from actual contronyms. Do not treat AI-produced references or domain trust scores as claim verification.
-
-## Validation
+Useful commands:
 
 ```sh
 npm run build
 npm test
+npm run preview
 ```
 
-`npm test` runs the Vitest suite, including mocked routing checks for all four providers and coverage of the blueprint's named curated word studies. Browser integration and live provider tests require the Vercel function runtime and credentials for the selected provider.
+`npm run preview` serves the built client; it is not a replacement for the Vercel function runtime.
+
+## Architecture and important files
+
+```text
+api/
+  ai.ts                  Vercel serverless endpoint, validation, provider routing, Gemini fallback
+src/
+  App.tsx                App shell, Study Hub flow, Settings, local fallback presentation
+  db.ts                  Dexie database and initial knowledge-base seeding
+  data.ts                Curated studies, Strong's entries, and apologetics dossiers
+  gemini.ts              Client AI requests, personal-key direct calls, response validation
+  gemini-models.ts       Ordered Gemini model candidate list
+  offline.ts             Local study/lexicon lookup and lexicon-only fallback construction
+  prompts.ts             Philologist and chat system prompts
+  trust.ts               Source host scoring and strict source filtering
+  types.ts               Core domain and settings types
+  *.test.ts              Vitest unit and mocked API tests
+vercel.json              Vercel build/output/function configuration
+vite.config.ts           Vite, React, and PWA build configuration
+```
+
+The production build runs `tsc -b && vite build`, emits the client to `dist`, and generates the PWA service worker and web manifest.
+
+### Data and state
+
+Dexie stores app data in browser IndexedDB database `word-context`. Tables include studies, lexicon entries, dossiers, and settings. Curated seed records are inserted without overwriting user records. Clearing site storage clears this local content and locally saved settings, including personal API keys.
+
+The main feature areas are Study Hub, Apologetics, Lexicon, Linguistic Notes, Patristic Archive, Notebook, and Settings. The app supports Old Testament/Hebrew and New Testament/Greek; a Strong's number beginning with `H` or `G` selects the corresponding testament for a search.
+
+## AI providers and request flow
+
+### Provider support
+
+| Provider | Server-side proxy | Personal key in Settings | Configured model |
+| --- | --- | --- | --- |
+| Gemini | Yes | Yes | Ordered cascade in [`src/gemini-models.ts`](./src/gemini-models.ts) |
+| Claude | Yes | No | `claude-3-5-haiku-latest` |
+| Groq | Yes | Yes | `llama-3.3-70b-versatile` |
+| Grok (xAI) | Yes | No | `grok-3-mini` |
+
+The exact provider model names and access are determined by the current code and the provider account. A model name in this table or in the fallback list does not mean that the model is enabled for every API key, project, region, or account.
+
+### Server-proxy request path
+
+For a provider without a personal browser key, the client sends a same-origin JSON `POST` to `/api/ai`. On Vercel this maps to [`api/ai.ts`](./api/ai.ts), which validates the request, reads the selected provider's server environment variable, and calls the provider from the server.
+
+Study request shape:
+
+```json
+{
+  "mode": "study",
+  "provider": "gemini",
+  "query": "faith",
+  "testament": "Greek",
+  "useSearchGrounding": false
+}
+```
+
+Chat request shape:
+
+```json
+{
+  "mode": "chat",
+  "provider": "gemini",
+  "messages": [
+    { "role": "user", "content": "How is this word used in this passage?" }
+  ]
+}
+```
+
+Study generation expects valid JSON containing the fields validated in [`src/gemini.ts`](./src/gemini.ts). A provider returning HTTP 200 does not guarantee a usable study: invalid JSON, missing fields, or a testament mismatch can still cause client-side validation to reject it.
+
+The proxy currently applies these limits and checks:
+
+- HTTP `POST` only.
+- Same-origin check; when `APP_ORIGIN` is set, the request `Origin` must match it.
+- In-memory best-effort limit of 20 requests per minute per observed IP **per serverless instance**. It is not a durable or globally shared public-service rate limiter.
+- Maximum serialized request body of 48,000 bytes.
+- Study query length up to 240 characters.
+- Chat accepts 1–20 messages, each up to 5,000 characters, and requires the final message to be from the user.
+- Provider secrets are read from server environment variables, not `VITE_*` variables.
+
+### Personal-key request path
+
+When a Gemini or Groq personal key is saved in Settings, that provider's browser request bypasses `/api/ai` and goes directly from the browser to Google or Groq. Consequently:
+
+- The corresponding Vercel function log will not contain that request.
+- `/api/ai` troubleshooting does not diagnose a direct-provider request; inspect the browser's Network panel and Console instead.
+- Browser extensions and scripts running in that browser can access the key. Use this only on a trusted personal device.
+- The key is stored in IndexedDB and is not protected like a server-side secret.
+- Direct requests remain subject to provider quotas, account/model permissions, network policy, and browser CORS behavior.
+- Clear the personal key in Settings and save to route that provider back through the Vercel proxy.
+
+The Gemini direct request sends the key in the `x-goog-api-key` header. The Vercel server request uses the provider's API URL with a `key` query parameter. Never share API keys, full request headers, or unredacted environment files in a bug report.
+
+### Google Search grounding and source scoring
+
+Google Search grounding is currently supported only for Gemini word-study requests. Grounded source URLs are read from Gemini response metadata. The source-trust layer scores URL hosts and can filter URLs in strict mode; a trusted host score is not proof that an individual claim is supported by that source. Other providers do not inherit Gemini's Search grounding capability.
+
+## Gemini model cascade
+
+The ordered candidate list is shared by the server and the browser-direct Gemini path:
+
+1. `gemini-3.8-flash`
+2. `gemini-flash-latest`
+3. `gemini-3.5-flash`
+4. `gemini-3.1-pro-preview`
+
+These are configured candidate IDs, not a guarantee that each ID is currently available. In particular, API availability may vary by account, project, region, API version, model lifecycle, and feature support. Confirm the exact IDs available to the same Google AI Studio/Google Cloud project as the key when troubleshooting.
+
+The Android blueprint's sample Retrofit endpoint uses `gemini-flash-latest`; the PWA does not call that Android code. Its own candidate list is the source of truth for PWA requests. Changing the Android repository or its key configuration does not change this PWA's Vercel function or browser client.
+
+For each candidate, the client/server makes at most two attempts:
+
+- HTTP 404: treat that candidate as unavailable and move to the next model without waiting.
+- HTTP 429, 500, or 503: wait one second, retry that candidate once, then continue to the next candidate if it still fails.
+- Network/timeout failure: retry once after one second, then continue.
+- Other HTTP errors (for example, an invalid request or rejected key): stop the cascade and report the error rather than treating it as temporary model load.
+
+Each upstream attempt has a five-second fetch timeout. In the worst case, eight attempts plus retry pauses can use approximately 44 seconds, below the `maxDuration: 60` function setting in [`vercel.json`](./vercel.json), excluding platform overhead.
+
+The cascade cannot fix an invalid/restricted API key, exhausted project quota, billing restrictions, disabled API access, unsupported grounding configuration, or a malformed request. The fallback models may also be unavailable to the same key. A fallback success response from the proxy includes the model that answered; the client currently uses the generated text and sources.
+
+When all candidates have transient errors or are unavailable, the request is marked as eligible for the local fallback. A matching bundled Strong's entry may then be shown as **lexicon only**. The fallback is not AI-generated historical interpretation, is not a complete word study, and is not displayed for unrelated errors. If there is no matching bundled entry, the user receives an explicit no-local-entry message instead.
+
+## Deploying to Vercel
+
+1. Import the PWA repository into Vercel and ensure the Vercel project points at the repository root.
+2. Use the repository's build command, `npm run build`, and output directory, `dist`. [`vercel.json`](./vercel.json) declares these along with a 60-second maximum duration for `api/ai.ts`.
+3. Add the provider environment variables described below in Vercel **Project Settings → Environment Variables**. Select the deployment environments where they should apply (Production, Preview, and/or Development).
+4. Set `APP_ORIGIN` to the deployed site's origin when using the server proxy, for example `https://your-domain.example` (scheme and hostname; do not include a path). If using a custom domain, configure the origin users actually visit.
+5. Redeploy after adding or changing environment variables. Existing deployments do not automatically receive changed settings.
+6. Test the deployed client and function together. The Vite development server or a static preview alone does not exercise the Vercel function.
+
+Keep server-managed credentials only in Vercel's server environment variables. Never add them to source code, README examples, browser `VITE_*` variables, commits, screenshots, or support logs.
+
+### Provider environment variables
+
+| Provider | Vercel environment variable |
+| --- | --- |
+| Gemini | `GEMINI_API_KEY` |
+| Claude | `ANTHROPIC_API_KEY` |
+| Groq | `GROQ_API_KEY` |
+| Grok (xAI) | `XAI_API_KEY` |
+
+The variable must exist for the Vercel deployment environment being tested. For example, a key configured only for Preview is not available to a Production deployment. Changing a key in Vercel requires a new deployment for the change to take effect.
+
+`APP_ORIGIN` is optional. Without it, the function compares the request `Origin` host with the incoming host. With it, the origin must exactly match the configured origin after URL origin normalization. A mismatch returns HTTP 403 before contacting the provider.
+
+## Configuring provider keys
+
+### Server-side keys (recommended for a controlled deployment)
+
+Set one or more provider environment variables in Vercel. Select the same provider in the app. This path keeps the key on the server and routes the browser request through `/api/ai`.
+
+### Personal Gemini or Groq keys
+
+For a personal deployment, enter a Gemini or Groq key in Settings and save. The client stores it in IndexedDB and sends requests directly to that provider. Saving a personal key changes the request path; a valid server-side key will not be used while the matching personal key is present.
+
+To troubleshoot or switch back to the server path:
+
+1. Check whether a personal key is saved for the currently selected provider.
+2. If testing the Vercel proxy, clear that personal key in Settings and save.
+3. Reload and submit a new request.
+4. Confirm in the browser Network panel that the request goes to your site's `/api/ai` endpoint.
+
+## AI/API troubleshooting
+
+Start by identifying the request path. A selected provider may be using either the Vercel proxy or a saved personal browser key. The same visible error can have different causes on those paths.
+
+### Find the failing request
+
+In browser developer tools:
+
+1. Open **Network**, enable **Preserve log**, and submit one new study or chat message.
+2. Determine whether the request URL is your site's `/api/ai` or a provider host such as `generativelanguage.googleapis.com` / `api.groq.com`.
+3. Record the HTTP status, response JSON, and request timing. Do not copy API keys or authorization headers.
+4. If it is `/api/ai`, inspect the matching Vercel Function log for the same timestamp. Proxy failures log the provider name and a bounded error message.
+5. If it is a direct provider URL, inspect the browser Console and that Network response. It will not appear in Vercel function logs.
+
+Also check whether the app opened a saved local study before making a request. A matching local study intentionally opens without calling AI.
+
+### Status and symptom guide
+
+| Symptom / status | Likely causes | Checks and next actions |
+| --- | --- | --- |
+| No request to `/api/ai`; UI opens a study immediately | A matching saved study was found locally. | Search with a term not already saved if you intend to test the API. |
+| `/api/ai` returns 404 or the hosting platform returns HTML | The deployment is serving only the static client, the function was not deployed, or the route is wrong. | Confirm `api/ai.ts` is in the repository root's `api` directory, check Vercel build/deployment output, and test with Vercel CLI rather than `vite` alone. |
+| HTTP 405 | The function received a method other than `POST`. | Confirm the client is using the current app build and the request method is `POST`. |
+| HTTP 400 | Invalid provider, mode, testament, or message payload. | For studies, select Greek or Hebrew; ensure the query is no longer than 240 characters. For chat, use 1–20 valid turns and end with a user turn. |
+| HTTP 403 from `/api/ai` | Request origin was rejected. | Check the browser's actual site origin and `APP_ORIGIN` in Vercel. Remove path segments from `APP_ORIGIN`, use the exact deployed/custom domain origin, and redeploy. |
+| HTTP 413 | Serialized request body exceeds 48,000 bytes. | Reduce chat history or message sizes; each chat message is limited to 5,000 characters. |
+| `Gemini/Claude/Groq/Grok is not configured on the server` (HTTP 503) | The selected provider's environment variable is missing from this deployment environment. | Check the exact variable spelling, Vercel project, and Production/Preview/Development scope; redeploy after changing it. |
+| HTTP 429 with quota/rate-limit detail | Provider rate limit, project quota, billing, or model capacity limit. | Check the provider console for the key's project, quota, billing, and `Retry-After`. The Gemini cascade retries/falls through models but cannot bypass a project-wide quota. |
+| HTTP 503 saying Gemini is temporarily unavailable after trying models | Gemini candidates all failed transiently, timed out, or returned 404 model-not-found. | Use Vercel logs to inspect the last provider detail. Verify each configured model ID and key access in the same provider project. Check provider status, API enablement, region, and Search grounding compatibility. |
+| HTTP 502 provider could not complete request | A non-retryable upstream error or another provider response failure. | Inspect the Vercel function log and provider-side key/model settings. Do not assume the Gemini cascade applies to Claude, Groq, or Grok. |
+| Direct Gemini HTTP 400 | The personal key reached Google, but the request/model/features may be invalid or unsupported. | Inspect the direct response body in Network/Console; check the model ID, request payload, and whether grounding is supported for that model. |
+| Direct Gemini HTTP 401/403 | The personal key is invalid, restricted, or lacks permission for the API/model. | Check the key and its project restrictions/API access in Google AI Studio or Google Cloud. Never paste the key into an issue. |
+| Direct Gemini HTTP 429 | Provider quota or rate limit on the personal key's project. | Check quota/billing and retry timing in the provider console. Direct requests still consume the key's quota. |
+| Browser reports CORS, DNS, offline, or timeout error | The browser-direct provider path cannot reach the service, or the provider rejected the browser origin. | Check Network/Console and provider browser/CORS support. To use the server path, clear the personal key and configure the server environment variable. |
+| HTTP 200 but app reports invalid JSON/missing fields | Provider returned content that does not match the strict WordStudy schema. | Inspect the response text without exposing secrets. Check the current prompt and schema validation in `src/gemini.ts`; model fallback only handles HTTP/network failures, not invalid generated content. |
+| HTTP 200 but strict verification rejects the study | No acceptable source URLs or the source score threshold was not met. | Try with strict verification disabled to distinguish citation filtering from API transport. Domain score is not claim verification. |
+| A lexicon-only entry appears | All Gemini candidate models exhausted eligible transient/unavailable errors and a matching bundled lexicon entry exists. | The entry is local dictionary data, not generated interpretation. If no entry exists, the app reports that limitation rather than inventing a study. |
+
+### How to report a reproducible API failure
+
+For another engineer or AI to diagnose the issue, provide:
+
+- Deployment URL's **origin only** (no tokens or private query strings).
+- Whether the failure is on a server-proxy request (`/api/ai`) or direct provider request.
+- Selected provider and whether a personal key is saved (say only yes/no).
+- Whether the operation is a study or chat; for a study, include testament and a non-sensitive test term.
+- HTTP status, response JSON with credentials removed, timestamp/time zone, and request duration.
+- Relevant Vercel function log lines for proxy calls, with keys and personal data redacted.
+- Whether the issue also occurs with Search grounding off and strict verification off.
+- Commit/deployment identifier and whether Production, Preview, or local Vercel development is being tested.
+
+Do **not** provide API keys, full `Authorization`/`x-goog-api-key` headers, `.env` files, cookies, or unredacted browser storage.
+
+Suggested investigation prompt for an AI coding assistant:
+
+> Diagnose the failing Word Context PWA AI request from the repository code and the sanitized evidence below. First determine whether the browser uses `/api/ai` or a direct personal-key provider request. Trace that exact path through the UI, client request code, Vercel handler, provider/model configuration, and response handling. Do not assume the Android app's API implementation is used by the PWA. Explain which evidence supports the root cause, distinguish transport/provider errors from client-side JSON/schema/source-verification errors, propose the smallest correct fix, and add or update a regression test. Never ask for or expose API keys.
+
+## Offline behavior and local data
+
+The app can open saved and curated studies, browse the bundled lexicon and dossiers, and store personal notes, tags, favorites, and settings locally. It does not currently provide a complete offline AI model.
+
+Local study lookup is attempted before AI generation. If no saved study matches, AI generation is attempted. Only after an eligible exhausted Gemini cascade may a matching lexicon entry be presented as a `lexicon-fallback` study. This record contains a dictionary gloss and explicit statements that historical, cultural, legal, and theological interpretations are not bundled for that entry.
+
+The bundled Strong's data is a small curated selection, not a complete concordance. A user can import additional lexicon JSON locally. Every entry must include:
+
+```json
+{
+  "code": "G26",
+  "testament": "Greek",
+  "lemma": "ἀγάπη",
+  "transliteration": "agapē",
+  "pronunciation": "ag-ah-pay",
+  "definition": "Love",
+  "derivation": "From G25",
+  "partOfSpeech": "Noun",
+  "kjvCount": 116,
+  "linkedStudy": "Love"
+}
+```
+
+`linkedStudy` is optional. Code prefixes must correspond to the testament (`G` for Greek, `H` for Hebrew). Import limits are 12 MB and 20,000 entries. Imported data is stored only in that browser's IndexedDB; review the data license and provenance before importing.
+
+## Features and known gaps against Android
+
+Implemented PWA surfaces and capabilities:
+
+- Testament-aware Study Hub, Strong's lookup, and contextual “Ask AI about this word” chat.
+- Curated study, lexicon, and apologetics dossier data persisted in IndexedDB.
+- Gemini, Claude, Groq, and Grok provider selection through the server proxy; optional personal Gemini and Groq direct keys.
+- Gemini Google Search grounding for study generation and source-host scoring/filtering.
+- Notebook favorites, personal notes and tags; study exports for sermon outline, academic brief, and pocket card.
+- Linguistic Notes catalogue, Patristic Archive with source-linked excerpts, onboarding/methodology disclosures, two themes, browser speech, and sharing/copying where supported.
+- PWA install/service worker behavior subject to browser support.
+
+Known differences and gaps versus the Android blueprint:
+
+- Android Room is replaced by browser IndexedDB. Clearing browser/site storage removes locally saved data.
+- The bundled Strong's entries are not an exhaustive concordance or scholarly dictionary.
+- The Patristic Archive contains nine source-linked English excerpts, not the full corpus in the Android specification.
+- The Linguistic Notes catalogue currently has five examples; it is not an exhaustive anomaly database and does not label every rare sense or translation difference a contronym.
+- AI output and host trust scores are aids, not scholarly fact-checking. Generated citations and interpretations require independent review.
+- The PWA has no Android paywall, native Android share sheet, or native Android speech implementation. Browser APIs and their support determine equivalent behavior.
+- Provider-native search/grounding is not universal. The current web grounding integration is Gemini-specific.
+
+## Testing and maintenance
+
+Run:
+
+```sh
+npm test
+npm run build
+```
+
+Vitest tests use mocked provider/network responses; they do not prove that a live provider key, model ID, account quota, CORS policy, or Vercel deployment is working. Live provider tests require credentials and should not put secrets in test output or source control.
+
+Relevant tests and implementation:
+
+- `src/api.test.ts`: Vercel handler validation, provider routing, Gemini retries and fallback model selection.
+- `src/gemini.test.ts`: client request paths, personal-key cascade, response schema validation, and offline-fallback eligibility.
+- `src/features.test.ts`: local lookups, bundled data, lexicon fallback construction, and import validation.
+- `api/ai.ts`: server input/origin/rate checks and provider calls.
+- `src/gemini.ts`: client proxy/direct requests and generated study validation.
+- `src/gemini-models.ts`: Gemini model candidate order.
+- `src/App.tsx`: local cache-first lookup and fallback presentation.
+
+When changing provider models, request payloads, response schemas, retry rules, function limits, environment variables, or fallback behavior, update this README and add tests that cover the changed behavior. Keep the deployment documentation synchronized with `vercel.json` and the actual code.
