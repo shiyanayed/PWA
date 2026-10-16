@@ -156,21 +156,15 @@ Google Search grounding is currently supported only for Gemini word-study reques
 The ordered candidate list is used by the Vercel server-side Gemini proxy:
 
 1. `gemini-flash-latest`
-2. `gemini-3.5-flash-lite`
+2. `gemini-1.5-flash`
 
-These are configured candidate IDs, not a guarantee that each ID is currently available. In particular, API availability may vary by account, project, region, API version, model lifecycle, and feature support. Confirm the exact IDs available to the same Google AI Studio/Google Cloud project as the key when troubleshooting.
+These are configured candidate IDs, not a guarantee that each ID is currently available. In particular, API availability may vary by account, project, region, API version, model lifecycle, and feature support. Confirm the exact IDs available to the same Google AI Studio/Google Cloud project as the key when troubleshooting. The PWA does not call Gemini 2.5 or Gemini 3.5 Flash Lite.
 
-The proxy error response on 2026-10-16 reported that `gemini-2.0-flash-lite` had been retired and explicitly recommended `gemini-3.5-flash-lite`; the current cascade therefore uses that replacement first.
+If a model returns HTTP 503, the proxy waits 1.5 seconds and retries that model once before moving on to the next candidate.
 
 The Android blueprint's sample Retrofit endpoint uses `gemini-flash-latest`; the PWA does not call that Android code. Its own candidate list is the source of truth for PWA requests. Changing the Android repository or its key configuration does not change this PWA's Vercel function or browser client.
 
-For each candidate, the client/server makes at most two attempts:
-
-- HTTP 404: treat that candidate as unavailable and move to the next model without waiting.
-- HTTP 429, 500, or 503: wait one second, retry that candidate once, then continue to the next candidate if it still fails.
-- Network/timeout failure: retry once after one second, then continue.
-- Other HTTP errors (for example, an invalid request or rejected key): stop the cascade and report the error rather than treating it as temporary model load.
-- HTTP 401/403 responses: stop immediately and report that the key was rejected or access denied; trying another model cannot repair key authorization.
+The current API retries only HTTP 503 responses once after a 1.5-second delay, then advances to the next candidate. Other HTTP failures advance without a retry.
 
 Each upstream attempt has a 60-second fetch timeout. The Vercel function's configured `maxDuration` is also 60 seconds; consequently, long or repeated timeouts may cause the platform to terminate a request before the complete multi-model cascade finishes. Immediate HTTP failures can still advance through the fallback list.
 

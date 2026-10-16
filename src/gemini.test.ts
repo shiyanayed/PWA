@@ -32,7 +32,7 @@ describe('AI study response validation', () => {
   it('uses the configured public Gemini model IDs in the intended order', () => {
     expect(GEMINI_MODELS).toEqual([
       'gemini-flash-latest',
-      'gemini-3.5-flash-lite',
+      'gemini-1.5-flash',
     ])
   })
 

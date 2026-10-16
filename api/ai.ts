@@ -69,52 +69,52 @@ IMPORTANT JSON FORMATTING RULES:
   for (const model of GEMINI_MODELS) {
     const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
 
-    try {
-      const response = await fetch(endpoint, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload)
-      });
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        const response = await fetch(endpoint, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
 
-      const responseText = await response.text();
+        const responseText = await response.text();
 
-      if (response.ok) {
-        const rawJson = JSON.parse(responseText);
-        let textOutput = rawJson.candidates?.[0]?.content?.parts?.[0]?.text || "{}";
+        if (response.ok) {
+          const rawJson = JSON.parse(responseText);
+          let textOutput = rawJson.candidates?.[0]?.content?.parts?.[0]?.text || "{}";
 
-        // 1. Clean markdown fences
-        textOutput = textOutput.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
+          textOutput = textOutput.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
+          const first = textOutput.indexOf("{");
+          const last = textOutput.lastIndexOf("}");
+          if (first !== -1 && last !== -1 && last > first) {
+            textOutput = textOutput.slice(first, last + 1);
+          }
 
-        // 2. Extract outermost { ... }
-        const first = textOutput.indexOf("{");
-        const last = textOutput.lastIndexOf("}");
-        if (first !== -1 && last !== -1 && last > first) {
-          textOutput = textOutput.slice(first, last + 1);
+          const sanitized = textOutput.replace(/[\x00-\x1f]/g, (c: string) => {
+            if (c === "\n") return "\\n";
+            if (c === "\r") return "\\r";
+            if (c === "\t") return "\\t";
+            return "";
+          });
+
+          const parsedStudy = JSON.parse(sanitized);
+          return res.status(200).json({
+            success: true,
+            study: parsedStudy,
+            text: sanitized,
+            ...parsedStudy
+          });
         }
 
-        // 3. Fix unescaped control chars / newlines in strings
-        const sanitized = textOutput.replace(/[\x00-\x1f]/g, (c: string) => {
-          if (c === "\n") return "\\n";
-          if (c === "\r") return "\\r";
-          if (c === "\t") return "\\t";
-          return "";
-        });
-
-        const parsedStudy = JSON.parse(sanitized);
-
-        // Return parsed study object directly
-        return res.status(200).json({
-          success: true,
-          study: parsedStudy,
-          text: sanitized,
-          ...parsedStudy
-        });
+        console.warn(`[api/ai] ${model} failed with ${response.status}:`, responseText);
+        lastFailure = { model, status: response.status, body: responseText };
+        if (response.status !== 503 || attempt === 1) break;
+      } catch (err: any) {
+        lastFailure = { model, error: err.message };
+        break;
       }
 
-      console.warn(`[api/ai] ${model} failed with ${response.status}:`, responseText);
-      lastFailure = { model, status: response.status, body: responseText };
-    } catch (err: any) {
-      lastFailure = { model, error: err.message };
+      await new Promise((resolve) => setTimeout(resolve, 1500));
     }
   }
 
