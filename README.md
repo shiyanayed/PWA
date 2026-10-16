@@ -155,9 +155,8 @@ Google Search grounding is currently supported only for Gemini word-study reques
 
 The ordered candidate list is used by the Vercel server-side Gemini proxy:
 
-1. `gemini-3.5-flash-lite`
-2. `gemini-flash-latest`
-3. `gemini-2.5-flash`
+1. `gemini-flash-latest`
+2. `gemini-3.5-flash-lite`
 
 These are configured candidate IDs, not a guarantee that each ID is currently available. In particular, API availability may vary by account, project, region, API version, model lifecycle, and feature support. Confirm the exact IDs available to the same Google AI Studio/Google Cloud project as the key when troubleshooting.
 
