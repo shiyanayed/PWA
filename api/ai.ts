@@ -1,4 +1,18 @@
-import type { VercelRequest, VercelResponse } from "@vercel/node";
+import type { VercelRequest } from '@vercel/node'
+
+type AiProxyRequest = {
+  method?: VercelRequest['method'];
+  headers?: Record<string, string | string[] | undefined>;
+  body?: VercelRequest['body'];
+};
+
+type AiProxyResponse = {
+  setHeader(name: string, value: string): void;
+  status(code: number): {
+    json(value: unknown): void;
+    end(): void;
+  };
+};
 
 export const maxDuration = 60;
 
@@ -42,7 +56,7 @@ const STUDY_RESPONSE_SCHEMA = {
   required: ["word", "testament", "literalMeaning", "thenMeaning", "nowMeaning", "historicalBackground"]
 };
 
-export default async function handler(req: VercelRequest, res: VercelResponse) {
+export default async function handler(req: AiProxyRequest, res: AiProxyResponse) {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "*");
