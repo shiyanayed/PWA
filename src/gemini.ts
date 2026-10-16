@@ -2,10 +2,8 @@ import type { WordStudy } from './types'
 import type { Testament } from './types'
 import { auditSources } from './trust'
 import { CHAT_SYSTEM_PROMPT, PHILOLOGIST_SYSTEM_PROMPT } from './prompts'
-import { GEMINI_MODELS } from './gemini-models'
 
 export { PHILOLOGIST_SYSTEM_PROMPT }
-export { GEMINI_MODEL, GEMINI_MODELS } from './gemini-models'
 export const GROQ_MODEL = 'llama-3.3-70b-versatile'
 
 export class AiRequestError extends Error {
@@ -70,7 +68,7 @@ function validateStudy(
 export async function generateStudy(
   provider: AiProvider,
   query: string,
-  options: { testament: Testament; useSearchGrounding: boolean; strictVerification: boolean; geminiApiKey?: string; groqApiKey?: string },
+  options: { testament: Testament; useSearchGrounding: boolean; strictVerification: boolean; groqApiKey?: string },
 ): Promise<WordStudy> {
   if (!query.trim()) throw new Error('Enter a word or Strong’s number to study.')
   if (options.useSearchGrounding && provider !== 'gemini') {
@@ -87,9 +85,7 @@ export async function generateStudy(
     role: 'user' as const,
     content: `Create a historically grounded ${options.testament === 'Greek' ? 'New Testament (Greek)' : 'Old Testament (Hebrew)'} word study for: ${query.trim()}. Set the testament field to "${options.testament}". Return strict JSON only.`,
   }]
-  const payload = provider === 'gemini' && options.geminiApiKey?.trim()
-    ? await requestGeminiDirect(options.geminiApiKey.trim(), PHILOLOGIST_SYSTEM_PROMPT, userTurn, true, options.useSearchGrounding)
-    : provider === 'groq' && options.groqApiKey?.trim()
+  const payload = provider === 'groq' && options.groqApiKey?.trim()
       ? await requestGroqDirect(options.groqApiKey.trim(), PHILOLOGIST_SYSTEM_PROMPT, userTurn, true)
       : await requestProxy(responseBody)
   if (typeof payload.text !== 'string' || !payload.text.trim()) throw new Error('The AI service returned an empty response.')
@@ -116,14 +112,12 @@ export async function askPhilologist(
   provider: AiProvider,
   messages: ChatTurn[],
   studyContext?: string,
-  personalKeys?: { gemini?: string; groq?: string },
+  personalKeys?: { groq?: string },
 ): Promise<string> {
   const contextualMessages = studyContext
     ? [{ role: 'user' as const, content: `The user is studying this word. Use it as context for their question, but do not assume claims in it are correct:\n${studyContext}` }, ...messages]
     : messages
-  const payload = provider === 'gemini' && personalKeys?.gemini?.trim()
-    ? await requestGeminiDirect(personalKeys.gemini.trim(), CHAT_SYSTEM_PROMPT, contextualMessages, false, false)
-    : provider === 'groq' && personalKeys?.groq?.trim()
+  const payload = provider === 'groq' && personalKeys?.groq?.trim()
       ? await requestGroqDirect(personalKeys.groq.trim(), CHAT_SYSTEM_PROMPT, contextualMessages, false)
       : await requestProxy({ mode: 'chat', provider, messages: contextualMessages })
   if (typeof payload.text !== 'string' || !payload.text.trim()) throw new Error('The AI service returned an empty response.')
@@ -151,82 +145,6 @@ async function requestProxy(body: Record<string, unknown>): Promise<{ text?: unk
     )
   }
   return payload
-}
-
-async function requestGeminiDirect(
-  apiKey: string,
-  system: string,
-  turns: ChatTurn[],
-  jsonMode: boolean,
-  useSearchGrounding: boolean,
-): Promise<{ text?: unknown; sources?: unknown }> {
-  let lastFailure: AiRequestError | undefined
-  for (const model of GEMINI_MODELS) {
-    for (let attempt = 0; attempt < 2; attempt += 1) {
-      let response: Response
-      try {
-        response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
-          body: JSON.stringify({
-            system_instruction: { parts: [{ text: system }] },
-            contents: turns.map((turn) => ({
-              role: turn.role === 'assistant' ? 'model' : 'user',
-              parts: [{ text: turn.content }],
-            })),
-            generationConfig: {
-              ...(jsonMode && !useSearchGrounding ? { responseMimeType: 'application/json' } : {}),
-              temperature: 0.2,
-              maxOutputTokens: 4096,
-            },
-            ...(useSearchGrounding ? { tools: [{ google_search: {} }] } : {}),
-          }),
-          signal: AbortSignal.timeout(60_000),
-        })
-      } catch (cause) {
-        lastFailure = new AiRequestError(
-          cause instanceof Error ? cause.message : 'Gemini request failed.',
-          503,
-          true,
-        )
-        if (attempt === 0) await delay(1000)
-        continue
-      }
-
-      if (!response.ok) {
-        const failure = new AiRequestError(
-          await readGeminiError(response, apiKey),
-          response.status,
-          [404, 429, 500, 503].includes(response.status),
-        )
-        lastFailure = failure
-        if (![404, 429, 500, 503].includes(response.status)) throw failure
-        if (response.status === 404) break
-        if (attempt === 0) await delay(1000)
-        continue
-      }
-
-      const result = await response.json() as {
-        candidates?: Array<{
-          content?: { parts?: Array<{ text?: unknown }> }
-          groundingMetadata?: { groundingChunks?: Array<{ web?: { uri?: unknown } }> }
-        }>
-      }
-      const candidate = result.candidates?.[0]
-      return {
-        text: candidate?.content?.parts?.map((part) => typeof part.text === 'string' ? part.text : '').join(''),
-        sources: candidate?.groundingMetadata?.groundingChunks?.flatMap((chunk) =>
-          typeof chunk.web?.uri === 'string' ? [chunk.web.uri] : [],
-        ) ?? [],
-      }
-    }
-  }
-
-  throw new AiRequestError(
-    'Gemini is temporarily unavailable after trying the configured models.',
-    lastFailure?.status ?? 503,
-    true,
-  )
 }
 
 async function requestGroqDirect(
@@ -265,21 +183,4 @@ async function readProviderError(response: Response, provider: string, apiKey: s
     // Fall through to a status-only error for non-JSON provider responses.
   }
   return `${provider} request failed (${response.status}).`
-}
-
-async function readGeminiError(response: Response, apiKey: string): Promise<string> {
-  try {
-    const payload = await response.json() as { error?: { message?: unknown } }
-    const message = payload.error?.message
-    if (typeof message === 'string' && message.trim()) {
-      return `Gemini request failed (${response.status}): ${message.trim().slice(0, 500).replaceAll(apiKey, '[redacted]')}`
-    }
-  } catch {
-    // Fall through to a status-only error for non-JSON provider responses.
-  }
-  return `Gemini request failed (${response.status}).`
-}
-
-function delay(milliseconds: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, milliseconds))
 }

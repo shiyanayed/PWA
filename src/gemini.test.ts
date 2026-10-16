@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { AiRequestError, askPhilologist, canUseOfflineFallback, generateStudy, GEMINI_MODELS } from './gemini'
+import { AiRequestError, askPhilologist, canUseOfflineFallback, generateStudy } from './gemini'
+import { GEMINI_MODELS } from './gemini-models'
 
 const validStudy = {
   word: 'Faith',
@@ -55,10 +56,10 @@ describe('AI study response validation', () => {
     expect(fetchStub.mock.calls[0][1].body).toContain('"testament":"Greek"')
   })
 
-  it('uses an optional personal Gemini key directly for word studies', async () => {
+  it('sends Gemini word studies through the server proxy', async () => {
     const fetchStub = vi.fn().mockResolvedValue({
       ok: true,
-      json: async () => ({ candidates: [{ content: { parts: [{ text: JSON.stringify(validStudy) }] } }] }),
+      json: async () => ({ text: JSON.stringify(validStudy), sources: [] }),
     })
     vi.stubGlobal('fetch', fetchStub)
 
@@ -66,29 +67,20 @@ describe('AI study response validation', () => {
       testament: 'Greek',
       useSearchGrounding: false,
       strictVerification: false,
-      geminiApiKey: 'personal-test-key',
     })
 
     expect(study.word).toBe('Faith')
-    expect(fetchStub).toHaveBeenCalledOnce()
-    expect(fetchStub.mock.calls[0][0]).toContain('/v1beta/models/gemini-2.0-flash:generateContent')
-    expect(fetchStub.mock.calls[0][1].headers).toEqual({
-      'Content-Type': 'application/json',
-      'x-goog-api-key': 'personal-test-key',
-    })
-    expect(fetchStub.mock.calls[0][0]).not.toContain('personal-test-key')
+    expect(fetchStub).toHaveBeenCalledWith('/api/ai', expect.objectContaining({
+      method: 'POST',
+      body: expect.stringContaining('"provider":"gemini"'),
+    }))
+    expect(fetchStub.mock.calls[0][1].body).toContain('"query":"faith"')
   })
 
-  it('sends grounded personal-key studies without JSON MIME mode and allows 60 seconds', async () => {
-    const timeoutSpy = vi.spyOn(AbortSignal, 'timeout').mockReturnValue(new AbortController().signal)
+  it('sends Search grounding preference to the server proxy', async () => {
     const fetchStub = vi.fn().mockResolvedValue({
       ok: true,
-      json: async () => ({
-        candidates: [{
-          content: { parts: [{ text: JSON.stringify(validStudy) }] },
-          groundingMetadata: { groundingChunks: [{ web: { uri: 'https://papyri.info/' } }] },
-        }],
-      }),
+      json: async () => ({ text: JSON.stringify(validStudy), sources: ['https://papyri.info/'] }),
     })
     vi.stubGlobal('fetch', fetchStub)
 
@@ -96,85 +88,16 @@ describe('AI study response validation', () => {
       testament: 'Greek',
       useSearchGrounding: true,
       strictVerification: false,
-      geminiApiKey: 'personal-test-key',
     })
 
-    const requestBody = JSON.parse(fetchStub.mock.calls[0][1].body)
-    expect(requestBody.generationConfig).not.toHaveProperty('responseMimeType')
-    expect(requestBody.tools).toEqual([{ google_search: {} }])
-    expect(timeoutSpy).toHaveBeenCalledWith(60_000)
+    expect(JSON.parse(fetchStub.mock.calls[0][1].body)).toMatchObject({
+      provider: 'gemini',
+      query: 'faith',
+      useSearchGrounding: true,
+    })
   })
 
-  it('retries a transient personal-key Gemini failure before accepting the response', async () => {
-    const fetchStub = vi.fn()
-      .mockResolvedValueOnce({
-        ok: false,
-        status: 503,
-        json: async () => ({ error: { message: 'Model is busy.' } }),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ candidates: [{ content: { parts: [{ text: JSON.stringify(validStudy) }] } }] }),
-      })
-    vi.stubGlobal('fetch', fetchStub)
-    vi.useFakeTimers()
-
-    const request = generateStudy('gemini', 'faith', {
-      testament: 'Greek',
-      useSearchGrounding: false,
-      strictVerification: false,
-      geminiApiKey: 'personal-test-key',
-    })
-    await vi.runAllTimersAsync()
-    const study = await request
-
-    expect(study.word).toBe('Faith')
-    expect(fetchStub).toHaveBeenCalledTimes(2)
-    expect(fetchStub.mock.calls[0][0]).toBe(fetchStub.mock.calls[1][0])
-  })
-
-  it('skips unavailable Gemini model IDs for personal-key requests', async () => {
-    const fetchStub = vi.fn()
-      .mockResolvedValueOnce({
-        ok: false,
-        status: 404,
-        json: async () => ({ error: { message: 'Model not found.' } }),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ candidates: [{ content: { parts: [{ text: JSON.stringify(validStudy) }] } }] }),
-      })
-    vi.stubGlobal('fetch', fetchStub)
-
-    await generateStudy('gemini', 'faith', {
-      testament: 'Greek',
-      useSearchGrounding: false,
-      strictVerification: false,
-      geminiApiKey: 'personal-test-key',
-    })
-
-    expect(fetchStub).toHaveBeenCalledTimes(2)
-    expect(fetchStub.mock.calls[0][0]).toContain('gemini-2.0-flash')
-    expect(fetchStub.mock.calls[1][0]).toContain('gemini-1.5-flash')
-  })
-
-  it('only marks exhausted Gemini model outages as eligible for offline fallback', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
-      ok: false,
-      status: 503,
-      json: async () => ({ error: { message: 'Busy.' } }),
-    }))
-    vi.useFakeTimers()
-
-    const request = generateStudy('gemini', 'faith', {
-      testament: 'Greek',
-      useSearchGrounding: false,
-      strictVerification: false,
-      geminiApiKey: 'personal-test-key',
-    })
-    const assertion = expect(request).rejects.toMatchObject({ offlineFallbackAvailable: true })
-    await vi.runAllTimersAsync()
-    await assertion
+  it('only enables local fallback for explicit temporary server outage errors', () => {
     expect(canUseOfflineFallback(new AiRequestError('Temporary outage.', 503, true))).toBe(true)
     expect(canUseOfflineFallback(new AiRequestError('Invalid request.', 400, false))).toBe(false)
     expect(canUseOfflineFallback(new Error('Unrelated failure.'))).toBe(false)
@@ -198,7 +121,7 @@ describe('AI study response validation', () => {
     })
   })
 
-  it('does not mark non-retryable personal-key Gemini errors for offline fallback', async () => {
+  it('does not mark non-retryable proxy Gemini errors for offline fallback', async () => {
     const fetchStub = vi.fn().mockResolvedValue({
       ok: false,
       status: 400,
@@ -210,7 +133,6 @@ describe('AI study response validation', () => {
       testament: 'Greek',
       useSearchGrounding: false,
       strictVerification: false,
-      geminiApiKey: 'personal-test-key',
     })).rejects.toMatchObject({
       status: 400,
       offlineFallbackAvailable: false,
@@ -316,19 +238,19 @@ describe('AI study response validation', () => {
     ])
   })
 
-  it('sends Gemini chat directly with the optional personal key', async () => {
+  it('sends Gemini chat through the server proxy', async () => {
     const fetchStub = vi.fn().mockResolvedValue({
       ok: true,
-      json: async () => ({ candidates: [{ content: { parts: [{ text: 'Direct Gemini answer.' }] } }] }),
+      json: async () => ({ text: 'Proxied Gemini answer.' }),
     })
     vi.stubGlobal('fetch', fetchStub)
 
-    await expect(askPhilologist('gemini', [{ role: 'user', content: 'Explain the word.' }], undefined, { gemini: 'personal-test-key' }))
-      .resolves.toBe('Direct Gemini answer.')
+    await expect(askPhilologist('gemini', [{ role: 'user', content: 'Explain the word.' }]))
+      .resolves.toBe('Proxied Gemini answer.')
 
     expect(fetchStub).toHaveBeenCalledOnce()
-    expect(fetchStub.mock.calls[0][0]).toContain('gemini-2.0-flash:generateContent')
-    expect(fetchStub.mock.calls[0][1].headers['x-goog-api-key']).toBe('personal-test-key')
+    expect(fetchStub.mock.calls[0][0]).toBe('/api/ai')
+    expect(fetchStub.mock.calls[0][1].body).toContain('"provider":"gemini"')
     expect(fetchStub.mock.calls[0][1].body).toContain('Explain the word.')
   })
 

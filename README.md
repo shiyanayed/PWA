@@ -77,7 +77,7 @@ The production build runs `tsc -b && vite build`, emits the client to `dist`, an
 
 ### Data and state
 
-Dexie stores app data in browser IndexedDB database `word-context`. Tables include studies, lexicon entries, dossiers, and settings. Curated seed records are inserted without overwriting user records. Clearing site storage clears this local content and locally saved settings, including personal API keys.
+Dexie stores app data in browser IndexedDB database `word-context`. Tables include studies, lexicon entries, dossiers, and settings. Curated seed records are inserted without overwriting user records. Clearing site storage clears this local content and locally saved settings, including an optional personal Groq key. Gemini keys are not stored in browser storage.
 
 The main feature areas are Study Hub, Apologetics, Lexicon, Linguistic Notes, Patristic Archive, Notebook, and Settings. The app supports Old Testament/Hebrew and New Testament/Greek; a Strong's number beginning with `H` or `G` selects the corresponding testament for a search.
 
@@ -87,7 +87,7 @@ The main feature areas are Study Hub, Apologetics, Lexicon, Linguistic Notes, Pa
 
 | Provider | Server-side proxy | Personal key in Settings | Configured model |
 | --- | --- | --- | --- |
-| Gemini | Yes | Yes | Ordered cascade in [`src/gemini-models.ts`](./src/gemini-models.ts) |
+| Gemini | Yes | No | Ordered server-side cascade in [`src/gemini-models.ts`](./src/gemini-models.ts) |
 | Claude | Yes | No | `claude-3-5-haiku-latest` |
 | Groq | Yes | Yes | `llama-3.3-70b-versatile` |
 | Grok (xAI) | Yes | No | `grok-3-mini` |
@@ -96,7 +96,7 @@ The exact provider model names and access are determined by the current code and
 
 ### Server-proxy request path
 
-For a provider without a personal browser key, the client sends a same-origin JSON `POST` to `/api/ai`. On Vercel this maps to [`api/ai.ts`](./api/ai.ts), which validates the request, reads the selected provider's server environment variable, and calls the provider from the server.
+Gemini studies and chat always send a same-origin JSON `POST` to `/api/ai`. On Vercel this maps to [`api/ai.ts`](./api/ai.ts), which validates the request, reads `GEMINI_API_KEY` from the server environment, and calls Google from the server. The browser never calls the Gemini API directly and never receives the server key. Other providers also use this proxy unless a personal Groq key is configured.
 
 Study request shape:
 
@@ -134,9 +134,9 @@ The proxy currently applies these limits and checks:
 - Chat accepts 1–20 messages, each up to 5,000 characters, and requires the final message to be from the user.
 - Provider secrets are read from server environment variables, not `VITE_*` variables.
 
-### Personal-key request path
+### Personal Groq-key request path
 
-When a Gemini or Groq personal key is saved in Settings, that provider's browser request bypasses `/api/ai` and goes directly from the browser to Google or Groq. Consequently:
+When a personal Groq key is saved in Settings, Groq requests bypass `/api/ai` and go directly from the browser to Groq. Gemini never uses this direct-key path. Consequently for Groq:
 
 - The corresponding Vercel function log will not contain that request.
 - `/api/ai` troubleshooting does not diagnose a direct-provider request; inspect the browser's Network panel and Console instead.
@@ -145,7 +145,7 @@ When a Gemini or Groq personal key is saved in Settings, that provider's browser
 - Direct requests remain subject to provider quotas, account/model permissions, network policy, and browser CORS behavior.
 - Clear the personal key in Settings and save to route that provider back through the Vercel proxy.
 
-The Gemini direct request sends the key in the `x-goog-api-key` header. The Vercel server request uses the provider's API URL with a `key` query parameter. Never share API keys, full request headers, or unredacted environment files in a bug report.
+The Vercel Gemini server request uses Google's API URL with a `key` query parameter. Never share API keys, full request headers, or unredacted environment files in a bug report.
 
 ### Google Search grounding and source scoring
 
@@ -153,7 +153,7 @@ Google Search grounding is currently supported only for Gemini word-study reques
 
 ## Gemini model cascade
 
-The ordered candidate list is shared by the server and the browser-direct Gemini path:
+The ordered candidate list is used by the Vercel server-side Gemini proxy:
 
 1. `gemini-2.0-flash`
 2. `gemini-1.5-flash`
@@ -208,29 +208,29 @@ The variable must exist for the Vercel deployment environment being tested. For 
 
 ### Server-side keys (recommended for a controlled deployment)
 
-Set one or more provider environment variables in Vercel. Select the same provider in the app. This path keeps the key on the server and routes the browser request through `/api/ai`.
+Set one or more provider environment variables in Vercel. Select the same provider in the app. Gemini always uses this path, keeping its key on the server and routing the browser request through `/api/ai`.
 
-### Personal Gemini or Groq keys
+### Personal Groq key
 
-For a personal deployment, enter a Gemini or Groq key in Settings and save. The client stores it in IndexedDB and sends requests directly to that provider. Saving a personal key changes the request path; a valid server-side key will not be used while the matching personal key is present.
+For a personal deployment, a Groq key can be entered in Settings and saved. The client stores it in IndexedDB and sends Groq requests directly to Groq. Gemini has no personal-key input: configure `GEMINI_API_KEY` in Vercel for both word studies and chat.
 
-To troubleshoot or switch back to the server path:
+To troubleshoot Groq or switch it back to the server path:
 
-1. Check whether a personal key is saved for the currently selected provider.
-2. If testing the Vercel proxy, clear that personal key in Settings and save.
+1. Check whether a personal Groq key is saved.
+2. Clear it in Settings and save to route Groq back through the Vercel proxy.
 3. Reload and submit a new request.
 4. Confirm in the browser Network panel that the request goes to your site's `/api/ai` endpoint.
 
 ## AI/API troubleshooting
 
-Start by identifying the request path. A selected provider may be using either the Vercel proxy or a saved personal browser key. The same visible error can have different causes on those paths.
+Start by identifying the request path. Gemini always uses the Vercel proxy. Groq may use either the proxy or a saved personal browser key. The same visible error can have different causes on those paths.
 
 ### Find the failing request
 
 In browser developer tools:
 
 1. Open **Network**, enable **Preserve log**, and submit one new study or chat message.
-2. Determine whether the request URL is your site's `/api/ai` or a provider host such as `generativelanguage.googleapis.com` / `api.groq.com`.
+2. Determine whether the request URL is your site's `/api/ai` or a provider host such as `api.groq.com`. Gemini requests should go to `/api/ai`; a Gemini request directly to Google indicates a stale or older client build.
 3. Record the HTTP status, response JSON, and request timing. Do not copy API keys or authorization headers.
 4. If it is `/api/ai`, inspect the matching Vercel Function log for the same timestamp. Proxy failures log the provider name and a bounded error message.
 5. If it is a direct provider URL, inspect the browser Console and that Network response. It will not appear in Vercel function logs.
@@ -251,10 +251,9 @@ Also check whether the app opened a saved local study before making a request. A
 | HTTP 429 with quota/rate-limit detail | Provider rate limit, project quota, billing, or model capacity limit. | Check the provider console for the key's project, quota, billing, and `Retry-After`. The Gemini cascade retries/falls through models but cannot bypass a project-wide quota. |
 | HTTP 503 saying Gemini is temporarily unavailable after trying models | Gemini candidates all failed transiently, timed out, or returned 404 model-not-found. | Use Vercel logs to inspect the last provider detail. Verify each configured model ID and key access in the same provider project. Check provider status, API enablement, region, and Search grounding compatibility. |
 | HTTP 502 provider could not complete request | A non-retryable upstream error or another provider response failure. | Inspect the Vercel function log and provider-side key/model settings. Do not assume the Gemini cascade applies to Claude, Groq, or Grok. |
-| Direct Gemini HTTP 400 | The personal key reached Google, but the request/model/features may be invalid or unsupported. | Inspect the direct response body in Network/Console; check the model ID, request payload, and whether grounding is supported for that model. |
-| Direct Gemini HTTP 401/403 | The personal key is invalid, restricted, or lacks permission for the API/model. | Check the key and its project restrictions/API access in Google AI Studio or Google Cloud. Never paste the key into an issue. |
-| Direct Gemini HTTP 429 | Provider quota or rate limit on the personal key's project. | Check quota/billing and retry timing in the provider console. Direct requests still consume the key's quota. |
-| Browser reports CORS, DNS, offline, or timeout error | The browser-direct provider path cannot reach the service, or the provider rejected the browser origin. | Check Network/Console and provider browser/CORS support. To use the server path, clear the personal key and configure the server environment variable. |
+| Browser sends Gemini directly to Google instead of `/api/ai` | A stale client bundle or service-worker-cached app is running. | Redeploy the current client, hard-reload, and update/clear the site's service-worker cache. The current source has no browser-direct Gemini path. |
+| Direct Groq request reports CORS, DNS, offline, or timeout error | The browser-direct Groq path cannot reach Groq, or Groq rejected the browser origin. | Check Network/Console and provider browser/CORS support. Clear the personal Groq key in Settings to route Groq through the server proxy. |
+| Gemini proxy request reports CORS, DNS, offline, or timeout error | The browser cannot reach the deployment or the `/api/ai` function; an origin failure may also be returned as HTTP 403. | Check the site's Network request, Vercel deployment/function logs, and `APP_ORIGIN`. Configure `GEMINI_API_KEY` in the server environment. |
 | HTTP 200 but app reports invalid JSON/missing fields | Provider returned content that does not match the strict WordStudy schema. | Inspect the response text without exposing secrets. Check the current prompt and schema validation in `src/gemini.ts`; model fallback only handles HTTP/network failures, not invalid generated content. |
 | HTTP 200 but strict verification rejects the study | No acceptable source URLs or the source score threshold was not met. | Try with strict verification disabled to distinguish citation filtering from API transport. Domain score is not claim verification. |
 | A lexicon-only entry appears | All Gemini candidate models exhausted eligible transient/unavailable errors and a matching bundled lexicon entry exists. | The entry is local dictionary data, not generated interpretation. If no entry exists, the app reports that limitation rather than inventing a study. |
@@ -264,8 +263,8 @@ Also check whether the app opened a saved local study before making a request. A
 For another engineer or AI to diagnose the issue, provide:
 
 - Deployment URL's **origin only** (no tokens or private query strings).
-- Whether the failure is on a server-proxy request (`/api/ai`) or direct provider request.
-- Selected provider and whether a personal key is saved (say only yes/no).
+- Whether the failure is on a server-proxy request (`/api/ai`) or direct Groq request.
+- Selected provider and, for Groq only, whether a personal key is saved (say only yes/no).
 - Whether the operation is a study or chat; for a study, include testament and a non-sensitive test term.
 - HTTP status, response JSON with credentials removed, timestamp/time zone, and request duration.
 - Relevant Vercel function log lines for proxy calls, with keys and personal data redacted.
@@ -309,7 +308,7 @@ Implemented PWA surfaces and capabilities:
 
 - Testament-aware Study Hub, Strong's lookup, and contextual “Ask AI about this word” chat.
 - Curated study, lexicon, and apologetics dossier data persisted in IndexedDB.
-- Gemini, Claude, Groq, and Grok provider selection through the server proxy; optional personal Gemini and Groq direct keys.
+- Gemini, Claude, Groq, and Grok provider selection through the server proxy; optional personal Groq direct key. Gemini always uses the server proxy.
 - Gemini Google Search grounding for study generation and source-host scoring/filtering.
 - Notebook favorites, personal notes and tags; study exports for sermon outline, academic brief, and pocket card.
 - Linguistic Notes catalogue, Patristic Archive with source-linked excerpts, onboarding/methodology disclosures, two themes, browser speech, and sharing/copying where supported.
